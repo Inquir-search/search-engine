@@ -1,0 +1,68 @@
+{
+  "version": 300,
+  "properties": {
+    "name": {
+      "type": "text"
+    },
+    "email": {
+      "type": "email"
+    },
+    "phone": {
+      "type": "phone"
+    },
+    "url": {
+      "type": "url"
+    },
+    "description": {
+      "type": "text"
+    },
+    "age": {
+      "type": "number"
+    },
+    "status": {
+      "type": "keyword"
+    },
+    "category": {
+      "type": "text"
+    },
+    "website": {
+      "type": "url"
+    },
+    "created": {
+      "type": "date"
+    },
+    "location": {
+      "type": "text"
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "Name": {
+      "type": "text"
+    },
+    "user": {
+      "type": "object"
+    },
+    "tags": {
+      "type": "text"
+    },
+    "scores": {
+      "type": "number"
+    },
+    "species": {
+      "type": "text"
+    },
+    "gender": {
+      "type": "text"
+    },
+    "origin": {
+      "type": "text"
+    },
+    "type": {
+      "type": "text"
+    },
+    "price": {
+      "type": "float"
+    }
+  }
+}
