@@ -114,3 +114,6 @@ snapshot.json
 debug-*.js
 test-*.js
 verify-*.js
+
+
+.data

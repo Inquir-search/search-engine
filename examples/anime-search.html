@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anime Search Engine</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .search-section {
+            padding: 30px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid #e9ecef;
+            border-radius: 25px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #ff6b6b;
+            box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.1);
+        }
+
+        .search-btn {
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .search-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(255, 107, 107, 0.3);
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 0;
+            min-height: 600px;
+        }
+
+        .facets-panel {
+            background: #f8f9fa;
+            padding: 25px;
+            border-right: 1px solid #e9ecef;
+            overflow-y: auto;
+        }
+
+        .facets-panel h3 {
+            color: #495057;
+            margin-bottom: 20px;
+            font-size: 1.2em;
+            border-bottom: 2px solid #ff6b6b;
+            padding-bottom: 10px;
+        }
+
+        .facet-group {
+            margin-bottom: 25px;
+        }
+
+        .facet-group h4 {
+            color: #6c757d;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .facet-options {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .facet-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 14px;
+        }
+
+        .facet-option:hover {
+            background: #e9ecef;
+        }
+
+        .facet-option.selected {
+            background: #ff6b6b;
+            color: white;
+        }
+
+        .facet-option input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #ff6b6b;
+        }
+
+        .facet-count {
+            margin-left: auto;
+            background: #6c757d;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            min-width: 20px;
+            text-align: center;
+        }
+
+        .facet-option.selected .facet-count {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .results-panel {
+            padding: 25px;
+            overflow-y: auto;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .results-count {
+            font-size: 1.1em;
+            color: #495057;
+            font-weight: 600;
+        }
+
+        .sort-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .sort-select {
+            padding: 8px 12px;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            background: white;
+            font-size: 14px;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .anime-card {
+            background: white;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            border: 1px solid #e9ecef;
+        }
+
+        .anime-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
+        }
+
+        .anime-image {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            background: linear-gradient(45deg, #f0f0f0, #e0e0e0);
+        }
+
+        .anime-content {
+            padding: 20px;
+        }
+
+        .anime-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 8px;
+            line-height: 1.3;
+        }
+
+        .anime-score {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+
+        .score-badge {
+            background: linear-gradient(135deg, #ffd700, #ffed4e);
+            color: #333;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .anime-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .meta-tag {
+            background: #e9ecef;
+            color: #6c757d;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .anime-synopsis {
+            color: #6c757d;
+            font-size: 14px;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #e9ecef;
+            border-radius: 50%;
+            border-top-color: #ff6b6b;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border: 1px solid #f5c6cb;
+        }
+
+        .clear-filters {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .clear-filters:hover {
+            background: #5a6268;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 30px;
+        }
+
+        .page-btn {
+            padding: 8px 12px;
+            border: 1px solid #e9ecef;
+            background: white;
+            color: #495057;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .page-btn:hover {
+            background: #f8f9fa;
+        }
+
+        .page-btn.active {
+            background: #ff6b6b;
+            color: white;
+            border-color: #ff6b6b;
+        }
+
+        .page-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+
+            .facets-panel {
+                border-right: none;
+                border-bottom: 1px solid #e9ecef;
+            }
+
+            .search-box {
+                flex-direction: column;
+            }
+
+            .results-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎌 Anime Search Engine</h1>
+            <p>Discover and explore your favorite anime titles</p>
+        </div>
+
+        <div class="search-section">
+            <div class="search-box">
+                <input type="text" id="searchInput" class="search-input"
+                    placeholder="Search anime by title, genre, studio... (supports typos, word prefixes & partial matches)">
+                <button onclick="performSearch()" class="search-btn">🔍 Search</button>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="facets-panel">
+                <h3>🏷️ Filters</h3>
+                <button onclick="clearAllFilters()" class="clear-filters">Clear All Filters</button>
+
+                <div class="facet-group">
+                    <h4>Type</h4>
+                    <div id="typeFacets" class="facet-options"></div>
+                </div>
+
+                <div class="facet-group">
+                    <h4>Status</h4>
+                    <div id="statusFacets" class="facet-options"></div>
+                </div>
+
+                <div class="facet-group">
+                    <h4>Season</h4>
+                    <div id="seasonFacets" class="facet-options"></div>
+                </div>
+
+                <div class="facet-group">
+                    <h4>Rating</h4>
+                    <div id="ratingFacets" class="facet-options"></div>
+                </div>
+
+                <div class="facet-group">
+                    <h4>Genres</h4>
+                    <div id="genresFacets" class="facet-options"></div>
+                </div>
+
+                <div class="facet-group">
+                    <h4>Studios</h4>
+                    <div id="studiosFacets" class="facet-options"></div>
+                </div>
+            </div>
+
+            <div class="results-panel">
+                <div class="results-header">
+                    <div class="results-count" id="resultsCount">Loading...</div>
+                    <div class="sort-controls">
+                        <label for="sortSelect">Sort by:</label>
+                        <select id="sortSelect" class="sort-select" onchange="performSearch()">
+                            <option value="score:desc">Score (High to Low)</option>
+                            <option value="score:asc">Score (Low to High)</option>
+                            <option value="name:asc">Name (A-Z)</option>
+                            <option value="name:desc">Name (Z-A)</option>
+                            <option value="year:desc">Year (Newest)</option>
+                            <option value="year:asc">Year (Oldest)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="resultsContainer">
+                    <div class="loading">Loading anime data...</div>
+                </div>
+
+                <div class="pagination" id="pagination"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 0;
+        let pageSize = 12;
+        let totalResults = 0;
+        let currentFacets = {};
+        let allFacets = {};
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function () {
+            loadFacets();
+            performSearch();
+
+            // Add enter key support for search
+            document.getElementById('searchInput').addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    performSearch();
+                }
+            });
+        });
+
+        // Configuration
+        const INDEX_NAME = 'anime'; // Can be made configurable
+
+        async function loadFacets() {
+            try {
+                // Use search with aggregations to get facets instead of the old /facets endpoint
+                const response = await fetch(`http://localhost:3000/search/${INDEX_NAME}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: { match_all: {} },
+                        size: 0, // We only need aggregations, not results
+                        aggs: {
+                            type: { terms: { field: 'type', size: 20 } },
+                            status: { terms: { field: 'status', size: 20 } },
+                            season: { terms: { field: 'season', size: 20 } },
+                            rating: { terms: { field: 'rating', size: 20 } },
+                            genres: { terms: { field: 'genres', size: 30 } },
+                            studios: { terms: { field: 'studios', size: 30 } }
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+
+                // Extract facets from aggregations
+                if (data.aggregations) {
+                    allFacets = extractFacetsFromAggregations(data.aggregations);
+                } else {
+                    // Fall back to legacy facets if available
+                    allFacets = data.facets || {};
+                }
+
+                renderFacets();
+            } catch (error) {
+                console.error('Error loading facets:', error);
+                // Show helpful error message
+                document.getElementById('resultsContainer').innerHTML =
+                    `<div class="error">Failed to load facets. Make sure the '${INDEX_NAME}' index exists. Create it with: POST /index</div>`;
+            }
+        }
+
+        function extractFacetsFromAggregations(aggregations) {
+            const facets = {};
+
+            // Convert aggregations format to legacy facets format for UI compatibility
+            const aggToFacetMap = {
+                'type': 'type',
+                'status': 'status',
+                'season': 'season',
+                'rating': 'rating',
+                'genres': 'genres',
+                'studios': 'studios'
+            };
+
+            for (const [aggName, facetField] of Object.entries(aggToFacetMap)) {
+                if (aggregations[aggName] && aggregations[aggName].buckets) {
+                    facets[facetField] = {};
+                    for (const bucket of aggregations[aggName].buckets) {
+                        facets[facetField][bucket.key] = bucket.doc_count;
+                    }
+                }
+            }
+
+            return facets;
+        }
+
+        function renderFacets() {
+            renderFacetGroup('typeFacets', 'type', allFacets.type || {});
+            renderFacetGroup('statusFacets', 'status', allFacets.status || {});
+            renderFacetGroup('seasonFacets', 'season', allFacets.season || {});
+            renderFacetGroup('ratingFacets', 'rating', allFacets.rating || {});
+            renderFacetGroup('genresFacets', 'genres', allFacets.genres || {});
+            renderFacetGroup('studiosFacets', 'studios', allFacets.studios || {});
+        }
+
+        function renderFacetGroup(containerId, fieldName, facets) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            Object.entries(facets)
+                .sort(([, a], [, b]) => b - a)
+                .slice(0, 10) // Limit to top 10
+                .forEach(([value, count]) => {
+                    const option = document.createElement('div');
+                    option.className = 'facet-option';
+                    option.onclick = () => toggleFacet(fieldName, value);
+
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.checked = currentFacets[fieldName]?.includes(value) || false;
+
+                    const label = document.createElement('span');
+                    label.textContent = value;
+
+                    const countSpan = document.createElement('span');
+                    countSpan.className = 'facet-count';
+                    countSpan.textContent = count;
+
+                    option.appendChild(checkbox);
+                    option.appendChild(label);
+                    option.appendChild(countSpan);
+
+                    if (checkbox.checked) {
+                        option.classList.add('selected');
+                    }
+
+                    container.appendChild(option);
+                });
+        }
+
+        function toggleFacet(fieldName, value) {
+            if (!currentFacets[fieldName]) {
+                currentFacets[fieldName] = [];
+            }
+
+            const index = currentFacets[fieldName].indexOf(value);
+            if (index > -1) {
+                currentFacets[fieldName].splice(index, 1);
+            } else {
+                currentFacets[fieldName].push(value);
+            }
+
+            if (currentFacets[fieldName].length === 0) {
+                delete currentFacets[fieldName];
+            }
+
+            currentPage = 0;
+            performSearch();
+        }
+
+        function clearAllFilters() {
+            currentFacets = {};
+            currentPage = 0;
+            renderFacets();
+            performSearch();
+        }
+
+        async function performSearch() {
+            const searchTerm = document.getElementById('searchInput').value.trim();
+            const sortOption = document.getElementById('sortSelect').value;
+
+            showLoading();
+
+            try {
+                // Build the query
+                let query = { match_all: {} };
+
+                // Add text search if provided
+                if (searchTerm) {
+                    query = {
+                        bool: {
+                            should: [
+                                // Exact match queries (highest boost)
+                                { match: { field: 'name', value: searchTerm, boost: 4.0 } },
+                                { match: { field: 'type', value: searchTerm, boost: 3.0 } },
+                                { match: { field: 'status', value: searchTerm, boost: 3.0 } },
+
+                                // Field prefix queries (start of field)
+                                { prefix: { field: 'name', value: searchTerm, boost: 3.5 } },
+                                { prefix: { field: 'genres', value: searchTerm, boost: 2.0 } },
+                                { prefix: { field: 'studios', value: searchTerm, boost: 2.0 } },
+
+                                // Wildcard queries for word prefixes anywhere in text
+                                { wildcard: { field: 'name', value: `*${searchTerm}*`, boost: 2.5 } },
+                                { wildcard: { field: 'genres', value: `*${searchTerm}*`, boost: 2.0 } },
+                                { wildcard: { field: 'studios', value: `*${searchTerm}*`, boost: 2.0 } },
+                                { wildcard: { field: 'synopsis', value: `*${searchTerm}*`, boost: 1.5 } },
+
+                                // Word prefix patterns (space + query for word boundaries)
+                                { wildcard: { field: 'name', value: `* ${searchTerm}*`, boost: 3.0 } },
+                                { wildcard: { field: 'synopsis', value: `* ${searchTerm}*`, boost: 1.8 } },
+
+                                // Fuzzy queries (typo tolerance)
+                                { fuzzy: { field: 'name', value: searchTerm, fuzziness: 2, boost: 1.5 } },
+                                { fuzzy: { field: 'type', value: searchTerm, fuzziness: 1, boost: 1.2 } },
+                                { fuzzy: { field: 'genres', value: searchTerm, fuzziness: 2, boost: 1.0 } },
+                                { fuzzy: { field: 'studios', value: searchTerm, fuzziness: 2, boost: 1.0 } },
+                                { fuzzy: { field: 'status', value: searchTerm, fuzziness: 1, boost: 1.0 } }
+                            ],
+                            minimum_should_match: 1
+                        }
+                    };
+                }
+
+                // Add facet filters
+                const filters = [];
+                Object.entries(currentFacets).forEach(([field, values]) => {
+                    if (values && values.length > 0) {
+                        if (values.length === 1) {
+                            filters.push({ term: { field, value: values[0] } });
+                        } else {
+                            filters.push({
+                                bool: {
+                                    should: values.map(value => ({ term: { field, value } }))
+                                }
+                            });
+                        }
+                    }
+                });
+
+                // Combine text search with filters
+                if (filters.length > 0) {
+                    if (searchTerm) {
+                        query = {
+                            bool: {
+                                must: [
+                                    // Use the same enhanced search structure with wildcards
+                                    {
+                                        bool: {
+                                            should: [
+                                                // Exact match queries (highest boost)
+                                                { match: { field: 'name', value: searchTerm, boost: 4.0 } },
+                                                { match: { field: 'type', value: searchTerm, boost: 3.0 } },
+                                                { match: { field: 'status', value: searchTerm, boost: 3.0 } },
+
+                                                // Field prefix queries (start of field)
+                                                { prefix: { field: 'name', value: searchTerm, boost: 3.5 } },
+                                                { prefix: { field: 'genres', value: searchTerm, boost: 2.0 } },
+                                                { prefix: { field: 'studios', value: searchTerm, boost: 2.0 } },
+
+                                                // Wildcard queries for word prefixes anywhere in text
+                                                { wildcard: { field: 'name', value: `*${searchTerm}*`, boost: 2.5 } },
+                                                { wildcard: { field: 'genres', value: `*${searchTerm}*`, boost: 2.0 } },
+                                                { wildcard: { field: 'studios', value: `*${searchTerm}*`, boost: 2.0 } },
+                                                { wildcard: { field: 'synopsis', value: `*${searchTerm}*`, boost: 1.5 } },
+
+                                                // Word prefix patterns (space + query for word boundaries)
+                                                { wildcard: { field: 'name', value: `* ${searchTerm}*`, boost: 3.0 } },
+                                                { wildcard: { field: 'synopsis', value: `* ${searchTerm}*`, boost: 1.8 } },
+
+                                                // Fuzzy queries (typo tolerance)
+                                                { fuzzy: { field: 'name', value: searchTerm, fuzziness: 2, boost: 1.5 } },
+                                                { fuzzy: { field: 'type', value: searchTerm, fuzziness: 1, boost: 1.2 } },
+                                                { fuzzy: { field: 'genres', value: searchTerm, fuzziness: 2, boost: 1.0 } },
+                                                { fuzzy: { field: 'studios', value: searchTerm, fuzziness: 2, boost: 1.0 } },
+                                                { fuzzy: { field: 'status', value: searchTerm, fuzziness: 1, boost: 1.0 } }
+                                            ],
+                                            minimum_should_match: 1
+                                        }
+                                    },
+                                    ...filters
+                                ]
+                            }
+                        };
+                    } else {
+                        query = {
+                            bool: {
+                                must: filters
+                            }
+                        };
+                    }
+                }
+
+                console.log('Search query:', JSON.stringify(query, null, 2));
+
+                const response = await fetch(`http://localhost:3000/search/${INDEX_NAME}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        query,
+                        from: currentPage * pageSize,
+                        size: pageSize,
+                        aggs: {
+                            type: { terms: { field: 'type', size: 20 } },
+                            status: { terms: { field: 'status', size: 20 } },
+                            season: { terms: { field: 'season', size: 20 } },
+                            rating: { terms: { field: 'rating', size: 20 } },
+                            genres: { terms: { field: 'genres', size: 30 } },
+                            studios: { terms: { field: 'studios', size: 30 } }
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Search failed: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('Search response:', data);
+
+                totalResults = data.total || 0;
+
+                // Update facets based on search results
+                if (data.aggregations) {
+                    allFacets = extractFacetsFromAggregations(data.aggregations);
+                    renderFacets();
+                }
+
+                renderResults(data.hits || []);
+                renderPagination();
+                updateResultsCount();
+
+            } catch (error) {
+                console.error('Search error:', error);
+                if (error.message.includes('404')) {
+                    showError(`Index '${INDEX_NAME}' not found. Create it first with: POST /index`);
+                } else {
+                    showError('Failed to perform search: ' + error.message);
+                }
+            }
+        }
+
+        function renderResults(hits) {
+            const container = document.getElementById('resultsContainer');
+
+            if (hits.length === 0) {
+                container.innerHTML = '<div class="loading">No anime found matching your criteria.</div>';
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="results-grid">
+                    ${hits.map(anime => `
+                        <div class="anime-card">
+                            <img src="${anime.image_url || 'https://via.placeholder.com/300x200?text=No+Image'}" 
+                                 alt="${anime.name}" 
+                                 class="anime-image"
+                                 onerror="this.src='https://via.placeholder.com/300x200?text=No+Image'">
+                            <div class="anime-content">
+                                <div class="anime-title">${anime.name}</div>
+                                <div class="anime-score">
+                                    <span class="score-badge">⭐ ${anime.score || 'N/A'}</span>
+                                    <span>(${anime.scored_by || 0} votes)</span>
+                                </div>
+                                <div class="anime-meta">
+                                    <span class="meta-tag">${anime.type || 'Unknown'}</span>
+                                    <span class="meta-tag">${anime.status || 'Unknown'}</span>
+                                    ${anime.year ? `<span class="meta-tag">${anime.year}</span>` : ''}
+                                    ${anime.episodes ? `<span class="meta-tag">${anime.episodes} eps</span>` : ''}
+                                </div>
+                                <div class="anime-synopsis">${anime.synopsis || 'No synopsis available.'}</div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function renderPagination() {
+            const totalPages = Math.ceil(totalResults / pageSize);
+            const container = document.getElementById('pagination');
+
+            if (totalPages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+
+            let paginationHTML = '';
+
+            // Previous button
+            paginationHTML += `
+                <button class="page-btn" ${currentPage === 0 ? 'disabled' : ''} 
+                        onclick="goToPage(${currentPage - 1})">← Previous</button>
+            `;
+
+            // Page numbers
+            const startPage = Math.max(0, currentPage - 2);
+            const endPage = Math.min(totalPages - 1, currentPage + 2);
+
+            for (let i = startPage; i <= endPage; i++) {
+                paginationHTML += `
+                    <button class="page-btn ${i === currentPage ? 'active' : ''}" 
+                            onclick="goToPage(${i})">${i + 1}</button>
+                `;
+            }
+
+            // Next button
+            paginationHTML += `
+                <button class="page-btn" ${currentPage === totalPages - 1 ? 'disabled' : ''} 
+                        onclick="goToPage(${currentPage + 1})">Next →</button>
+            `;
+
+            container.innerHTML = paginationHTML;
+        }
+
+        function goToPage(page) {
+            currentPage = page;
+            performSearch();
+        }
+
+        function updateResultsCount() {
+            const start = currentPage * pageSize + 1;
+            const end = Math.min((currentPage + 1) * pageSize, totalResults);
+            document.getElementById('resultsCount').textContent =
+                `Showing ${start}-${end} of ${totalResults} anime`;
+        }
+
+        function showLoading() {
+            document.getElementById('resultsContainer').innerHTML =
+                '<div class="loading">Searching anime...</div>';
+        }
+
+        function showError(message) {
+            document.getElementById('resultsContainer').innerHTML =
+                `<div class="error">${message}</div>`;
+        }
+    </script>
+</body>
+
+</html>
