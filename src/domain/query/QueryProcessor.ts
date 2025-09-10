@@ -127,7 +127,9 @@ export class QueryProcessor {
                 const field = termQuery.field;
                 const value = termQuery.value;
                 const fuzziness = termQuery.fuzziness || 0;
-                return this._processSingleTerm(field, value, fuzziness);
+                if (field && value !== undefined) {
+                    return this._processSingleTerm(field, value, fuzziness);
+                }
             } else {
                 const fieldNames = Object.keys(query.term).filter(key => key !== 'fuzziness');
                 if (fieldNames.length > 0) {
@@ -210,8 +212,10 @@ export class QueryProcessor {
             if (matchQuery.field && matchQuery.value !== undefined) {
                 const field = matchQuery.field;
                 const value = matchQuery.value;
-                const fuzziness = matchQuery.fuzziness;
-                return this._processSingleTerm(field, value, fuzziness);
+                const fuzziness = matchQuery.fuzziness || 0;
+                if (field && value !== undefined) {
+                    return this._processSingleTerm(field, value, fuzziness);
+                }
             } else {
                 const fieldNames = Object.keys(matchQuery).filter(key => key !== 'fuzziness' && key !== 'boost');
                 if (fieldNames.length > 0) {
@@ -223,7 +227,9 @@ export class QueryProcessor {
                         fuzziness = value.fuzziness || fuzziness;
                         value = value.query;
                     }
-                    return this._processSingleTerm(fieldName, value, fuzziness);
+                    if (fieldName && value !== undefined) {
+                        return this._processSingleTerm(fieldName, value, fuzziness || 0);
+                    }
                 }
             }
         }
@@ -234,18 +240,64 @@ export class QueryProcessor {
         if (query.bool) {
             const boolQuery = query.bool;
             // NEW: Explicitly handle a bool query that defines an empty "should" array (and has no must/filter clauses)
-            if (('should' in boolQuery) && Array.isArray(boolQuery.should) && boolQuery.should.length === 0 && (!boolQuery.must || boolQuery.must.length === 0) && (!boolQuery.filter || boolQuery.filter.length === 0)) {
+            if (('should' in boolQuery) && Array.isArray(boolQuery.should) && boolQuery.should.length === 0 && (!boolQuery.must || !Array.isArray(boolQuery.must) || boolQuery.must.length === 0) && (!boolQuery.filter || !Array.isArray(boolQuery.filter) || boolQuery.filter.length === 0)) {
                 // Elasticsearch semantics: an empty should clause with no must/filter means the whole bool query matches no documents.
                 return { documents: new Set() };
             }
-            
-            // Use shared query processor to avoid duplication
-            const sharedProcessor = new SharedQueryProcessor({ documents: this.documents });
-            const results = sharedProcessor.processBoolQuery(boolQuery);
-            
-            // Convert array results back to Set for consistency
-            const resultSet = new Set(results.map(doc => doc.id || doc));
-            return { documents: resultSet };
+
+            let results = new Set<string>();
+
+            // Process filter clauses first (mandatory)
+            if (boolQuery.filter && Array.isArray(boolQuery.filter)) {
+                for (const filterClause of boolQuery.filter) {
+                    const filterResult = this.execute(filterClause);
+                    if (results.size === 0) {
+                        results = new Set(filterResult.documents);
+                    } else {
+                        results = new Set([...results].filter(docId => filterResult.documents.has(docId)));
+                    }
+                }
+            }
+
+            // Process must clauses (mandatory)
+            if (boolQuery.must && Array.isArray(boolQuery.must)) {
+                for (const mustClause of boolQuery.must) {
+                    const mustResult = this.execute(mustClause);
+                    if (results.size === 0) {
+                        results = new Set(mustResult.documents);
+                    } else {
+                        results = new Set([...results].filter(docId => mustResult.documents.has(docId)));
+                    }
+                }
+            }
+
+            // Process should clauses (optional, but at least one must match if minimum_should_match is set)
+            if (boolQuery.should && Array.isArray(boolQuery.should) && boolQuery.should.length > 0) {
+                const shouldResults = new Set<string>();
+                for (const shouldClause of boolQuery.should) {
+                    const clauseResult = this.execute(shouldClause);
+                    for (const docId of clauseResult.documents) {
+                        shouldResults.add(docId);
+                    }
+                }
+
+                // If we have must/filter results, intersect with should results
+                if (results.size > 0) {
+                    results = new Set([...results].filter(docId => shouldResults.has(docId)));
+                } else {
+                    results = shouldResults;
+                }
+            }
+
+            // Process must_not clauses (exclusion)
+            if (boolQuery.must_not && Array.isArray(boolQuery.must_not)) {
+                for (const mustNotClause of boolQuery.must_not) {
+                    const mustNotResult = this.execute(mustNotClause);
+                    results = new Set([...results].filter(docId => !mustNotResult.documents.has(docId)));
+                }
+            }
+
+            return { documents: results };
         }
         return { documents: new Set() };
     }
@@ -263,6 +315,7 @@ export class QueryProcessor {
 
             const resultDocuments = new Set<string>();
             for (const [docId, doc] of this.documents.entries()) {
+                if (!field) continue;
                 const value = this._getFieldValue(doc, field);
                 if (value === undefined || value === null) continue;
 
@@ -299,6 +352,7 @@ export class QueryProcessor {
                 return { documents: allResults };
             }
 
+            if (!field || value === undefined) return { documents: new Set() };
             const normalizedPrefix = this._normalize(field, value);
             const matchingTokens = new Set<string>();
             const fieldTokens = this._getFieldTokens(field);
@@ -339,6 +393,7 @@ export class QueryProcessor {
                 return { documents: allResults };
             }
 
+            if (!field || value === undefined) return { documents: new Set() };
             const regex = new RegExp(`^${value.replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
             const matchingTokens = new Set<string>();
             const fieldTokens = this._getFieldTokens(field);
@@ -379,7 +434,9 @@ export class QueryProcessor {
             const field = fuzzyQuery.field;
             const value = fuzzyQuery.value;
             const fuzziness = fuzzyQuery.fuzziness !== undefined ? fuzzyQuery.fuzziness : 1;
-            return this._processSingleTerm(field, value, fuzziness);
+            if (field && value !== undefined) {
+                return this._processSingleTerm(field, value, fuzziness);
+            }
         }
         return { documents: new Set() };
     }

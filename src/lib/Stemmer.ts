@@ -132,7 +132,7 @@ export class Stemmer {
      * @param language - Optional language code
      * @returns Stemmed word
      */
-    stemSync(word: string, language: string | null = null): string {
+    async stemSync(word: string, language: string | null = null): Promise<string> {
         if (!this.options.enabled || !word || typeof word !== 'string') {
             return word;
         }
@@ -150,7 +150,7 @@ export class Stemmer {
         this.stats.cacheMisses++;
 
         // Use provided language or default (no auto-detection in sync mode)
-        const stemmedWord = this.snowballStemmer.stem(word, actualLanguage);
+        const stemmedWord = await this.snowballStemmer.stem(word, actualLanguage);
         this.stats.stemmingOperations++;
 
         // Update cache
@@ -166,7 +166,9 @@ export class Stemmer {
         if (this.stemCache.size >= this.options.cacheSize) {
             // Remove oldest entries (simple FIFO)
             const firstKey = this.stemCache.keys().next().value;
-            this.stemCache.delete(firstKey);
+            if (firstKey) {
+                this.stemCache.delete(firstKey);
+            }
         }
         this.stemCache.set(key, value);
     }
@@ -255,7 +257,9 @@ export class Stemmer {
         if (newOptions.cacheSize && newOptions.cacheSize !== this.options.cacheSize) {
             while (this.stemCache.size > newOptions.cacheSize) {
                 const firstKey = this.stemCache.keys().next().value;
-                this.stemCache.delete(firstKey);
+                if (firstKey) {
+                    this.stemCache.delete(firstKey);
+                }
             }
         }
     }

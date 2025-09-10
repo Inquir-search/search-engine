@@ -46,13 +46,13 @@ export class SnapshotManager {
 
     constructor(config: SnapshotConfig) {
         this.config = {
-            enabled: true,
-            interval: 300000, // 5 minutes default
-            maxSnapshots: 10,
-            directory: './snapshots',
-            compression: true,
-            format: 'json',
-            ...config
+            ...config,
+            enabled: config.enabled ?? true,
+            interval: config.interval ?? 300000, // 5 minutes default
+            maxSnapshots: config.maxSnapshots ?? 10,
+            directory: config.directory ?? './snapshots',
+            compression: config.compression ?? true,
+            format: config.format ?? 'json'
         };
 
         this.ensureSnapshotDirectory();
@@ -64,14 +64,14 @@ export class SnapshotManager {
      */
     registerStore(name: string, store: DocumentStore): void {
         this.stores.set(name, store);
-        }
+    }
 
     /**
      * Unregister a document store
      */
     unregisterStore(name: string): void {
         this.stores.delete(name);
-        }
+    }
 
     /**
      * Start automatic snapshot scheduling
@@ -89,7 +89,7 @@ export class SnapshotManager {
             }
         }, this.config.interval);
 
-        }
+    }
 
     /**
      * Stop automatic snapshot scheduling
@@ -100,7 +100,7 @@ export class SnapshotManager {
             this.intervalId = null;
         }
         this.isRunning = false;
-        }
+    }
 
     /**
      * Create snapshots for all registered stores
@@ -361,7 +361,7 @@ export class SnapshotManager {
         }
 
         if (toDelete.length > 0) {
-            }
+        }
     }
 
     private async loadSnapshotMetadata(): Promise<void> {
@@ -372,7 +372,7 @@ export class SnapshotManager {
                 const data = JSON.parse(content);
                 this.snapshotMetadata = new Map(Object.entries(data));
             } catch (error) {
-                }
+            }
         }
     }
 

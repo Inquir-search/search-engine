@@ -8,6 +8,8 @@ import { QueryEngine } from '../src/domain/QueryEngine';
 
 // In-memory mocks
 class MockMappingsManager {
+    public mappings: Map<string, any>;
+
     constructor() {
         this.mappings = new Map([
             ['name', { type: 'text' }],
@@ -16,7 +18,7 @@ class MockMappingsManager {
         ]);
     }
     getFieldType(field) { return (this.mappings.get(field) || { type: 'text' }).type; }
-    getTextFields() { return Array.from(this.mappings.entries()).filter(([, mapping]) => ['text', 'keyword', 'email', 'url'].includes(mapping.type)).map(([field]) => field); }
+    getTextFields() { return Array.from(this.mappings.entries()).filter((entry) => ['text', 'keyword', 'email', 'url'].includes(entry[1].type)).map((entry) => entry[0]); }
     autoExtend(doc) {
         console.log('autoExtend called with doc:', doc);
         for (const [k, v] of Object.entries(doc)) {
@@ -43,16 +45,23 @@ class MockMappingsManager {
     _compileValidator() { }
 }
 class MockStopwordsManager {
+    private stopwords: Set<string>;
+
     constructor() { this.stopwords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by']); }
     getAll() { return Array.from(this.stopwords); }
+    has(word: string) { return this.stopwords.has(word.toLowerCase()); }
     isStopword(word) { return this.stopwords.has(word.toLowerCase()); }
     autoDetect() { return null; }
 }
 
 // Patch SynonymEngine for tests to provide isEnabled and getSynonyms
 class TestSynonymEngine {
-    isEnabled() { return false; }
-    getSynonyms() { return []; }
+    add(key: string, value: string): void { }
+    get(key: string): Set<string> { return new Set(); }
+    getSynonyms(key: string): Set<string> { return new Set(); }
+    isEnabled(): boolean { return false; }
+    load(): void { }
+    save(): void { }
 }
 
 describe('Querying Logic Tests', () => {
@@ -78,11 +87,7 @@ describe('Querying Logic Tests', () => {
             synonymEngine,
             new Tokenizer(stopwordsManager),
             new Map(),
-            mappingsManager,
-            new RankingPipeline(
-                new BM25Scorer(0, 0, new Map(), new ShardedInvertedIndex({ numShards: 1 })),
-                new Tokenizer(stopwordsManager)
-            )
+            mappingsManager
         );
     });
 
@@ -94,7 +99,7 @@ describe('Querying Logic Tests', () => {
         const documents = new Map();
         const scorer = new BM25Scorer(0, 0, new Map(), invertedIndex);
         const rankingPipeline = new RankingPipeline(scorer, tokenizer);
-        queryEngine = new QueryEngine(invertedIndex, new SynonymEngine(), tokenizer, documents, mappingsManager, rankingPipeline);
+        queryEngine = new QueryEngine(invertedIndex, new SynonymEngine(), tokenizer, documents, mappingsManager);
 
         // Clean the engine to ensure fresh state
         queryEngine.clean();
@@ -129,7 +134,7 @@ describe('Querying Logic Tests', () => {
             { id: 'doc26', name: '(555) 123-4567' },
             { id: 'doc27', name: '+1-555-987-6543' },
             { id: 'doc28', name: 'Contact Info', email: 'user@example.com', phone: '555-123-4567', url: 'https://example.com/profile' },
-            { id: 'doc29', name: 'page1', name: 'Document 1' },
+            { id: 'doc29', name: 'Document 1' },
             { id: 'doc30', name: 'Document 2' },
             { id: 'doc31', name: 'Document 3' },
             { id: 'doc32', name: "Don't worry, be happy!" },
@@ -193,7 +198,7 @@ describe('Querying Logic Tests', () => {
         const results = queryEngine.search('word');
 
         expect(results.hits.length).toBe(2);
-        expect(results.hits[0].id).toBe('docB').toBeTruthy();
+        expect(results.hits[0].id).toBe('docB');
     });
 
     // 3. Edge Case Tests
@@ -565,7 +570,6 @@ describe('Querying Logic Tests', () => {
         expect(areaCodeIds).toEqual(['ph1', 'ph2']);
 
         // Test searching by full number (digits only)
-        console.log('Search query tokens for 1234567890:', tokenizer.tokenize('1234567890', 'standard'));
         const fullNumberResults = queryEngine.search('1234567890');
 
         expect(fullNumberResults.hits.length).toBe(1);

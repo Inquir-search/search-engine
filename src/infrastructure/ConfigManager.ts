@@ -48,6 +48,7 @@ export interface PersistenceConfig {
     mappingsFile: string;
     compression: boolean;
     maxParallelShards: number;
+    enableShardedStorage?: boolean;
 }
 
 export interface QueryConfig {
@@ -278,11 +279,11 @@ class ConfigManager {
                             const userConfig = configModule.default || configModule;
                             this.config = this._mergeConfigs(this.config, userConfig);
                         } catch (requireError) {
-                            }
+                        }
                     }
                 }
             } catch (error: any) {
-                }
+            }
         }
 
         this.validateConfig(this.config);
@@ -302,7 +303,7 @@ class ConfigManager {
 
     get<K extends keyof AppConfig>(key: K): AppConfig[K] {
         if (!this.configLoaded) {
-            }
+        }
         return this.config[key];
     }
 
@@ -383,7 +384,7 @@ export const getConfigManager = (): ConfigManager => {
     if (!configManagerInstance) {
         configManagerInstance = new ConfigManager();
         configManagerInstance.loadConfig().catch(error => {
-            });
+        });
     }
     return configManagerInstance;
 };

@@ -1,5 +1,5 @@
 import QueryEngine from "./QueryEngine";
-import GeoEngine from "./GeoEngine";
+// import GeoEngine from "./GeoEngine"; // TODO: Implement GeoEngine
 import FacetEngine from "./FacetEngine";
 import PersonalizationEngine from "./PersonalizationEngine";
 import ShardedInvertedIndex from "./ShardedInvertedIndex";
@@ -8,7 +8,7 @@ import MappingsManager from "./MappingsManager";
 import AggregationIndex from "./AggregationIndex";
 import StopwordsManager from "../infrastructure/StopwordsManager";
 // import StreamingPersistence from '../infrastructure/StreamingPersistence'; // Removed to avoid circular dependency
-import { QueryParser, QueryType } from './query/QueryParser';
+import { QueryParser } from './query/QueryParser';
 import BM25Scorer from './BM25Scorer';
 import RankingPipeline from './RankingPipeline';
 import { AutoPersistenceManager } from './AutoPersistenceManager';
@@ -87,7 +87,7 @@ export default class SearchEngine {
 
         // Create default ranking pipeline if not provided
         const rankingPipeline = options.rankingPipeline || new RankingPipeline();
-        const stopwordsManager = options.stopwordsManager || new StopwordsManager({ get: () => [], autoSave: false });
+        const stopwordsManager = options.stopwordsManager || new StopwordsManager({ autoSave: false });
         const tokenizer = options.tokenizer || new Tokenizer(stopwordsManager);
         const personalizationEngine = options.personalizationEngine || null;
         const synonymEngine = options.synonymEngine || new SynonymEngine();
@@ -157,7 +157,7 @@ export default class SearchEngine {
 
         // Create default ranking pipeline if not provided
         const rankingPipeline = options.rankingPipeline || new RankingPipeline();
-        const stopwordsManager = options.stopwordsManager || new StopwordsManager({ get: () => [], autoSave: false });
+        const stopwordsManager = options.stopwordsManager || new StopwordsManager({ autoSave: false });
         const tokenizer = options.tokenizer || new Tokenizer(stopwordsManager);
         const personalizationEngine = options.personalizationEngine || null;
         const synonymEngine = options.synonymEngine || new SynonymEngine();
@@ -707,7 +707,7 @@ export default class SearchEngine {
                 indexName: index
             };
         } catch (error) {
-            console.error(`Failed to get stats for index '${index}':`, error.message);
+            console.error(`Failed to get stats for index '${index}':`, error instanceof Error ? error.message : String(error));
             throw error;
         }
     }
@@ -972,9 +972,10 @@ export default class SearchEngine {
             const docIds = docs.map(doc => doc.id);
 
             for (const [aggName, aggConfig] of Object.entries(aggs)) {
-                if (aggConfig.terms) {
-                    const field = aggConfig.terms.field;
-                    const size = aggConfig.terms.size || 10;
+                if (aggConfig && typeof aggConfig === 'object' && 'terms' in aggConfig && aggConfig.terms) {
+                    const termsConfig = aggConfig.terms as any;
+                    const field = termsConfig.field;
+                    const size = termsConfig.size || 10;
                     if (field) {
                         // Calculate aggregations based on actual search results, not FacetEngine
                         const counts: Record<string, number> = {};
@@ -985,62 +986,68 @@ export default class SearchEngine {
                                 counts[key] = (counts[key] || 0) + 1;
                             }
                         }
-                        
+
                         // Sort by count and limit to size
                         const sortedBuckets = Object.entries(counts)
                             .sort((a, b) => b[1] - a[1])
                             .slice(0, size)
                             .map(([key, doc_count]) => ({ key, doc_count }));
-                        
+
                         result.aggregations[aggName] = {
                             buckets: sortedBuckets
                         };
                     }
-                } else if (aggConfig.histogram) {
-                    const field = aggConfig.histogram.field;
-                    const interval = aggConfig.histogram.interval;
+                } else if (aggConfig && typeof aggConfig === 'object' && 'histogram' in aggConfig && aggConfig.histogram) {
+                    const histogramConfig = aggConfig.histogram as any;
+                    const field = histogramConfig.field;
+                    const interval = histogramConfig.interval;
                     if (field && interval) {
                         result.aggregations[aggName] = idx.facetEngine.calculateHistogram(docs, field, interval);
                     }
-                } else if (aggConfig.date_histogram) {
-                    const field = aggConfig.date_histogram.field;
-                    const interval = aggConfig.date_histogram.interval;
+                } else if (aggConfig && typeof aggConfig === 'object' && 'date_histogram' in aggConfig && aggConfig.date_histogram) {
+                    const dateHistogramConfig = aggConfig.date_histogram as any;
+                    const field = dateHistogramConfig.field;
+                    const interval = dateHistogramConfig.interval;
                     if (field && interval) {
                         result.aggregations[aggName] = idx.facetEngine.calculateDateHistogram(docs, field, interval);
                     }
-                } else if (aggConfig.range) {
-                    const field = aggConfig.range.field;
-                    const ranges = aggConfig.range.ranges;
+                } else if (aggConfig && typeof aggConfig === 'object' && 'range' in aggConfig && aggConfig.range) {
+                    const rangeConfig = aggConfig.range as any;
+                    const field = rangeConfig.field;
+                    const ranges = rangeConfig.ranges;
                     if (field) {
                         result.aggregations[aggName] = idx.facetEngine.calculateRange(docs, field, ranges);
                     }
-                } else if (aggConfig.nested) {
-                    const path = aggConfig.nested.path;
+                } else if (aggConfig && typeof aggConfig === 'object' && 'nested' in aggConfig && aggConfig.nested) {
+                    const nestedConfig = aggConfig.nested as any;
+                    const path = nestedConfig.path;
                     if (path) {
-                        result.aggregations[aggName] = idx.facetEngine.calculateNested(docs, path, aggConfig.aggs || {});
+                        result.aggregations[aggName] = idx.facetEngine.calculateNested(docs, path, nestedConfig.aggs || {});
                     }
-                } else if (aggConfig.global) {
+                } else if (aggConfig && typeof aggConfig === 'object' && 'global' in aggConfig && aggConfig.global) {
                     // Global aggregations - calculate on entire dataset regardless of query
                     const globalDocs = Array.from(idx.documents.values());
                     const globalDocIds = Array.from(idx.documents.keys());
 
-                    if (aggConfig.global.aggs) {
+                    const globalConfig = aggConfig.global as any;
+                    if (globalConfig.aggs) {
                         result.aggregations[aggName] = { doc_count: globalDocs.length };
                         // Recursively calculate sub-aggregations on global dataset
-                        const globalSubAggs = this._calculateAggregations(aggConfig.global.aggs, globalDocs, idx);
+                        const globalSubAggs = this._calculateAggregations(globalConfig.aggs, globalDocs, idx);
                         if (globalSubAggs.aggregations) {
                             Object.assign(result.aggregations[aggName], globalSubAggs.aggregations);
                         }
                     }
-                } else if (aggConfig.filter) {
+                } else if (aggConfig && typeof aggConfig === 'object' && 'filter' in aggConfig && aggConfig.filter) {
                     // Filter aggregations - apply additional filter and then calculate sub-aggregations
                     const filteredDocs = this._applyFilterToDocuments(docs, aggConfig.filter, idx);
                     const filteredDocIds = filteredDocs.map(doc => doc.id);
 
                     result.aggregations[aggName] = { doc_count: filteredDocs.length };
 
-                    if (aggConfig.aggs) {
-                        const filteredSubAggs = this._calculateAggregations(aggConfig.aggs, filteredDocs, idx);
+                    const filterConfig = aggConfig as any;
+                    if (filterConfig.aggs) {
+                        const filteredSubAggs = this._calculateAggregations(filterConfig.aggs, filteredDocs, idx);
                         if (filteredSubAggs.aggregations) {
                             Object.assign(result.aggregations[aggName], filteredSubAggs.aggregations);
                         }

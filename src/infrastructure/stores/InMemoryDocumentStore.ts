@@ -1,4 +1,5 @@
 import { DocumentStore, Document, DocumentFilter, StorageStats, StorageOptions, BulkOperationResult, DocumentStoreSnapshot } from './DocumentStore.js';
+import { getErrorMessage } from '../../lib/utils/ErrorUtils';
 
 /**
  * In-Memory Document Store
@@ -21,7 +22,7 @@ export class InMemoryDocumentStore extends DocumentStore {
         if (this.isInitialized) return;
 
         this.isInitialized = true;
-        }
+    }
 
     async shutdown(): Promise<void> {
         if (!this.isInitialized) return;
@@ -29,7 +30,7 @@ export class InMemoryDocumentStore extends DocumentStore {
         this.documents.clear();
         this.indexes.clear();
         this.isInitialized = false;
-        }
+    }
 
     async isHealthy(): Promise<boolean> {
         return this.isInitialized;
@@ -188,7 +189,7 @@ export class InMemoryDocumentStore extends DocumentStore {
                 result.failed++;
                 result.errors.push({
                     id: document.id,
-                    error: error.message
+                    error: getErrorMessage(error)
                 });
             }
         }
@@ -234,7 +235,7 @@ export class InMemoryDocumentStore extends DocumentStore {
                 result.failed++;
                 result.errors.push({
                     id,
-                    error: error.message
+                    error: getErrorMessage(error)
                 });
             }
         }
@@ -314,7 +315,7 @@ export class InMemoryDocumentStore extends DocumentStore {
             this.stats.totalIndexes--;
             this.updateMemoryUsage();
 
-            `);
+            console.log(`Index '${indexName}' deleted successfully`);
             return true;
         }
 
@@ -345,7 +346,6 @@ export class InMemoryDocumentStore extends DocumentStore {
         try {
             const snapshot = await this.createSnapshot();
             // In a real implementation, you would write to the destination
-            `);
             return true;
         } catch (error) {
             console.error('Backup failed:', error);
@@ -356,7 +356,6 @@ export class InMemoryDocumentStore extends DocumentStore {
     async restore(source: string): Promise<boolean> {
         try {
             // In a real implementation, you would read from the source
-            `);
             return true;
         } catch (error) {
             console.error('Restore failed:', error);

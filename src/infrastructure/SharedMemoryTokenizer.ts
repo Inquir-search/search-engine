@@ -307,7 +307,7 @@ export default class SharedMemoryTokenizer {
         }
 
         // Tokenize using the domain tokenizer
-        const tokens = this.tokenizer.tokenize(text, useAnalyzer);
+        const tokens = this.tokenizer.tokenize(text, useAnalyzer as any);
 
         // Cache the result (with size limit)
         if (this.tokenCache.size >= this.maxCacheSize) {
@@ -335,7 +335,7 @@ export default class SharedMemoryTokenizer {
         const useAnalyzer = analyzer || this.defaultAnalyzer;
 
         // Use stemming tokenizer
-        const tokens = await this.tokenizer.tokenizeWithStemming(text, useAnalyzer, options);
+        const tokens = await this.tokenizer.tokenizeWithStemming(text, useAnalyzer as any, options);
 
         return tokens;
     }
@@ -418,14 +418,14 @@ export default class SharedMemoryTokenizer {
      * Get available analyzers
      */
     getAvailableAnalyzers(): string[] {
-        return this.tokenizer.getAvailableAnalyzers();
+        return (this.tokenizer as any).getAvailableAnalyzers?.() || [];
     }
 
     /**
      * Check if analyzer is valid
      */
     isValidAnalyzer(analyzer: string): boolean {
-        return this.tokenizer.isValidAnalyzer(analyzer);
+        return (this.tokenizer as any).isValidAnalyzer?.(analyzer) || false;
     }
 }
 

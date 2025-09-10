@@ -5,6 +5,9 @@ import { ISynonymEngine } from './SynonymEngine.js';
 import { ITokenizer, AnalyzerType } from './Tokenizer.js';
 import { IMappingsManager } from './MappingsManager.js';
 import { ShardedInvertedIndex } from './ShardedInvertedIndex';
+import { DocumentProcessingService } from './services/DocumentProcessingService.js';
+import { FieldTypeDetectionService } from './services/FieldTypeDetectionService.js';
+import { QueryProcessingService } from './services/QueryProcessingService.js';
 // Removed unused external IDocumentsStore import – we declare the interface locally below.
 
 /**
@@ -73,6 +76,9 @@ export class QueryEngine {
     private readonly documents: IDocumentsStore;
     private readonly mappingsManager: IMappingsManager;
     private readonly processor: QueryProcessor;
+    private readonly documentProcessor: DocumentProcessingService;
+    private readonly fieldTypeDetector: FieldTypeDetectionService;
+    private readonly queryProcessor: QueryProcessingService;
 
     /**
      * Internal sequence counter to track insertion order of documents.  This
@@ -120,6 +126,11 @@ export class QueryEngine {
             documents,
             mappingsManager
         });
+
+        // Initialize domain services
+        this.documentProcessor = new DocumentProcessingService(tokenizer);
+        this.fieldTypeDetector = new FieldTypeDetectionService();
+        this.queryProcessor = new QueryProcessingService(tokenizer, this.documentProcessor);
     }
 
     /**
@@ -158,26 +169,13 @@ export class QueryEngine {
         this._seqCounter += 1;
         this._seqMap.set(docIdString, this._seqCounter);
 
-        // Very simple token indexing: only handle primitive string fields
-        const textLikeTypes = new Set(['text', 'keyword', 'email', 'url']);
+        // Use domain service for document processing
+        this.documentProcessor.iterateFieldsWithCallback(doc, (field, value, fieldName) => {
+            // Determine mapping type using domain service
+            const fieldTypeResult = this.fieldTypeDetector.detectFieldType(value, fieldName);
+            const fieldType = fieldTypeResult.type;
 
-        for (const [field, value] of Object.entries(doc)) {
-            if (field === 'id' || value == null) continue;
-
-            // Determine mapping type, defaulting to 'text'
-            let fieldType: string | undefined;
-            if (this.mappingsManager) {
-                if (typeof (this.mappingsManager as any).getFieldType === 'function') {
-                    fieldType = (this.mappingsManager as any).getFieldType(field);
-                }
-                if (!fieldType && typeof (this.mappingsManager as any).getMapping === 'function') {
-                    const mapping = (this.mappingsManager as any).getMapping(field);
-                    fieldType = mapping?.type;
-                }
-            }
-            if (!fieldType) fieldType = 'text';
-
-            if (textLikeTypes.has(fieldType) && typeof value === 'string') {
+            if (this.fieldTypeDetector.isTextLikeType(fieldType) && typeof value === 'string') {
                 // Choose analyzer based on field type for higher precision
                 let analyzer: AnalyzerType = AnalyzerType.STANDARD;
                 if (fieldType === 'email') analyzer = AnalyzerType.EMAIL;
@@ -206,7 +204,7 @@ export class QueryEngine {
                     }
                 });
             }
-        }
+        });
     }
 
     /**
@@ -250,7 +248,7 @@ export class QueryEngine {
                 console.log(`🔍 QueryEngine: Validation failed, will use naive scan`);
             }
         } catch (e) {
-            console.log(`🔍 QueryEngine: QueryProcessor error:`, e.message);
+            console.log(`🔍 QueryEngine: QueryProcessor error:`, e instanceof Error ? e.message : String(e));
             // ignore and rely on fallback
         }
 
@@ -315,9 +313,10 @@ export class QueryEngine {
             const aggsConfig = context.aggregations || context.aggs;
 
             for (const [aggName, aggConfig] of Object.entries(aggsConfig)) {
-                if (aggConfig.terms) {
-                    const field = aggConfig.terms.field;
-                    const size = aggConfig.terms.size || 10;
+                if (aggConfig && typeof aggConfig === 'object' && 'terms' in aggConfig && aggConfig.terms) {
+                    const termsConfig = aggConfig.terms as any;
+                    const field = termsConfig.field;
+                    const size = termsConfig.size || 10;
 
                     // Calculate terms aggregation
                     const counts: Record<string, number> = {};
@@ -430,6 +429,11 @@ export class QueryEngine {
     private _validateProcessorQuery(query: any): boolean {
         if (!query) return false;
 
+        // Handle string queries - they are always valid
+        if (typeof query === 'string') {
+            return query.trim().length > 0;
+        }
+
         // Check for common query types and validate their values
         if (query.match) {
             // Handle both internal format and OpenSearch format
@@ -529,6 +533,24 @@ export class QueryEngine {
         if (!query) return null;
 
         try {
+            // Handle string queries by converting to match query
+            if (typeof query === 'string') {
+                const terms = query.trim().split(/\s+/).filter(term => term.length > 0);
+                if (terms.length === 0) return null;
+
+                // For single term, create a simple match query
+                if (terms.length === 1) {
+                    return { match: { '*': terms[0] } }; // '*' means search all text fields
+                }
+
+                // For multiple terms, create a bool query with must clauses
+                return {
+                    bool: {
+                        must: terms.map(term => ({ match: { '*': term } }))
+                    }
+                };
+            }
+
             // Handle DDD query objects
             if (query.constructor && query.constructor.name === 'MatchQuery') {
                 const field = query.getField();
@@ -930,37 +952,17 @@ export class QueryEngine {
 
         // Helper to extract lowercase tokens from string fields of a document
         const extractDocTokens = (doc: any): string[] => {
-            const tokens: string[] = [];
-            for (const [field, val] of Object.entries(doc)) {
-                if (field === 'id') continue;
-                if (typeof val === 'string') {
-                    const tok = this.tokenizer ? this.tokenizer.tokenize(val, AnalyzerType.STANDARD) : val.toLowerCase().split(/\s+/);
-                    tok.forEach(t => {
-                        if (t && !this._isStopword(t)) {
-                            tokens.push(t.toLowerCase());
-                        }
-                    });
-
-                    // For phone-like fields, also add normalized version of the full field value
-                    if (field.toLowerCase().includes('phone') && /^[\d\-\+\(\)\s\.]+$/.test(val)) {
-                        const normalized = val.replace(/[\s\-\(\)\.]/g, '');
-                        if (normalized !== val) {
-                            tokens.push(normalized);
-                        }
-                    }
-                }
-            }
-            return tokens;
+            // Use domain service for token extraction
+            return this.documentProcessor.extractTextContent(doc, AnalyzerType.STANDARD).filter(token =>
+                token && !this._isStopword(token)
+            ).map(token => token.toLowerCase());
         };
 
         // String query: match across string fields only
         if (typeof query === 'string') {
-            let tokens = this.tokenizer ? this.tokenizer.tokenize(query, AnalyzerType.STANDARD) : query.toLowerCase().split(/\s+/);
-            // Keep non-empty tokens that are not stopwords. We intentionally do NOT restrict
-            // tokens to alphabetic characters only so that numeric strings (e.g. phone area
-            // codes) and special content (email local parts, URL hostnames, etc.) can be
-            // matched by user queries.
-            tokens = tokens.filter(t => !!t && !this._isStopword(t));
+            // Use domain service for query processing
+            const queryResult = this.queryProcessor.processQueryString(query, AnalyzerType.STANDARD);
+            const tokens = queryResult.tokens;
 
             // For numeric queries, also add normalized versions (remove common formatting)
             if (tokens.length > 0 && /^\d+$/.test(tokens[0])) {

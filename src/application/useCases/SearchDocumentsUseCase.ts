@@ -5,6 +5,7 @@ import { SearchRepository } from '../../domain/repositories/SearchRepository';
 import { QueryEngine } from '../../domain/QueryEngine';
 import { RankingPipeline } from '../../domain/RankingPipeline';
 import { Document } from '../../domain/entities/Document';
+import { IndexName } from '../../domain/valueObjects/index';
 
 export class SearchDocumentsUseCase implements IUseCase<SearchQuery, SearchResult> {
     constructor(
@@ -21,10 +22,10 @@ export class SearchDocumentsUseCase implements IUseCase<SearchQuery, SearchResul
             sort: query.sort
         });
 
-        const documents = await this.searchRepository.findByIds(Array.from(searchResult.documents), indexName);
+        const documents = await this.searchRepository.findByIds(Array.from(searchResult.documents), new IndexName(indexName));
 
         const rankedDocuments = await this.rankingPipeline.rank(
-            documents,
+            documents.map(doc => (doc as any).id || doc),
             query.query,
         );
 
@@ -32,10 +33,10 @@ export class SearchDocumentsUseCase implements IUseCase<SearchQuery, SearchResul
         const size = query.size || 10;
         const paginatedDocuments = rankedDocuments.slice(from, from + size);
 
-        const hits: SearchHit[] = paginatedDocuments.map(doc => ({
-            _id: doc.id.value,
-            _score: (doc as any)._score,
-            _source: doc.toPrimitives()
+        const hits: SearchHit[] = paginatedDocuments.map((doc: any) => ({
+            _id: typeof doc.id === 'string' ? doc.id : (doc.id?.value || doc.id),
+            _score: doc._score || 0,
+            _source: doc.toPrimitives ? doc.toPrimitives() : doc
         }));
 
         return new SearchResult({

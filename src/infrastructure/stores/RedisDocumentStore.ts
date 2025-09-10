@@ -1,4 +1,5 @@
 import { DocumentStore, Document, DocumentFilter, StorageStats, StorageOptions, BulkOperationResult, DocumentStoreSnapshot } from './DocumentStore.js';
+import { getErrorMessage } from '../../lib/utils/ErrorUtils';
 
 // Redis client interface (to avoid direct dependency)
 interface RedisClient {
@@ -73,7 +74,7 @@ export class RedisDocumentStore extends DocumentStore {
             await this.loadStats();
 
             this.isInitialized = true;
-            } catch (error) {
+        } catch (error) {
             console.error('❌ Failed to initialize RedisDocumentStore:', error);
             throw error;
         }
@@ -89,7 +90,7 @@ export class RedisDocumentStore extends DocumentStore {
             }
 
             this.isInitialized = false;
-            } catch (error) {
+        } catch (error) {
             console.error('⚠️ Error during shutdown:', error);
         }
     }
@@ -288,7 +289,7 @@ export class RedisDocumentStore extends DocumentStore {
                     result.failed++;
                     result.errors.push({
                         id: document.id,
-                        error: error.message
+                        error: getErrorMessage(error)
                     });
                 }
             }
@@ -314,7 +315,7 @@ export class RedisDocumentStore extends DocumentStore {
                 success: false,
                 processed: 0,
                 failed: documents.length,
-                errors: [{ id: 'batch', error: error.message }]
+                errors: [{ id: 'batch', error: error instanceof Error ? error.message : String(error) }]
             };
         }
     }
@@ -388,7 +389,7 @@ export class RedisDocumentStore extends DocumentStore {
                         result.failed++;
                         result.errors.push({
                             id,
-                            error: error.message
+                            error: getErrorMessage(error)
                         });
                     }
                 }
@@ -402,7 +403,7 @@ export class RedisDocumentStore extends DocumentStore {
                 success: false,
                 processed: 0,
                 failed: ids.length,
-                errors: [{ id: 'batch', error: error.message }]
+                errors: [{ id: 'batch', error: error instanceof Error ? error.message : String(error) }]
             };
         }
     }
@@ -434,7 +435,7 @@ export class RedisDocumentStore extends DocumentStore {
                             results.push(document);
                         }
                     } catch (error) {
-                        }
+                    }
                 }
             }
 
@@ -506,7 +507,7 @@ export class RedisDocumentStore extends DocumentStore {
             await this.client.del(this.getIndexSetKey(indexName));
 
             this.stats.totalIndexes--;
-            `);
+            console.log(`Index '${indexName}' deleted successfully`);
             return true;
         } catch (error) {
             console.error('Failed to delete index:', error);
@@ -555,7 +556,6 @@ export class RedisDocumentStore extends DocumentStore {
             const snapshot = await this.createSnapshot();
 
             // In a real implementation, you would serialize and save the snapshot
-            `);
             return true;
         } catch (error) {
             console.error('Redis backup failed:', error);
@@ -566,7 +566,6 @@ export class RedisDocumentStore extends DocumentStore {
     async restore(source: string): Promise<boolean> {
         try {
             // In a real implementation, you would load and deserialize the snapshot
-            `);
             return true;
         } catch (error) {
             console.error('Redis restore failed:', error);
@@ -620,7 +619,7 @@ export class RedisDocumentStore extends DocumentStore {
                 await this.put(document);
             }
 
-            ).length} indexes`);
+            console.log(`Restored ${snapshot.documents.size} documents across ${snapshot.metadata.indexes.length} indexes`);
             return true;
         } catch (error) {
             console.error('Failed to load snapshot:', error);
@@ -631,7 +630,6 @@ export class RedisDocumentStore extends DocumentStore {
     // Maintenance operations
     async compact(): Promise<boolean> {
         // Redis handles memory optimization internally
-        ');
         return true;
     }
 
@@ -688,8 +686,8 @@ export class RedisDocumentStore extends DocumentStore {
                 this.stats.totalDocuments += documentIds.length;
             }
 
-            } catch (error) {
-            }
+        } catch (error) {
+        }
     }
 
     private getDocumentKey(id: string, indexName: string): string {

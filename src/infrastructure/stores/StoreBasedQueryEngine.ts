@@ -4,7 +4,7 @@ import { InMemoryDocumentStore } from './InMemoryDocumentStore.js';
 import { IQueryEngine, QueryContext } from '../../domain/QueryEngine.js';
 import { DocumentId } from '../../domain/valueObjects/index.js';
 import { DomainQuery } from '../../application/queries/SearchQuery.js';
-import { QueryParser, QueryType } from '../../domain/query';
+import { QueryParser } from '../../domain/query/QueryParser';
 
 export interface StoreQueryConfig {
     enableCaching: boolean;
@@ -75,7 +75,7 @@ export class StoreBasedQueryEngine implements IQueryEngine {
             this.defaultStore = name;
         }
 
-        ' : ''}`);
+        console.log(`Store '${name}' registered${isDefault ? ' as default' : ''}`);
     }
 
     /**
@@ -89,7 +89,7 @@ export class StoreBasedQueryEngine implements IQueryEngine {
         for (const [name, store] of this.stores) {
             try {
                 await store.initialize();
-                } catch (error) {
+            } catch (error) {
                 console.error(`❌ Failed to initialize store '${name}':`, error);
             }
         }
@@ -97,7 +97,7 @@ export class StoreBasedQueryEngine implements IQueryEngine {
         // Load data from persistent stores to in-memory for fast searching
         await this.loadDataToMemory();
 
-        }
+    }
 
     /**
      * Shutdown the query engine and all stores
@@ -108,13 +108,13 @@ export class StoreBasedQueryEngine implements IQueryEngine {
         for (const [name, store] of this.stores) {
             try {
                 await store.shutdown();
-                } catch (error) {
+            } catch (error) {
                 console.error(`❌ Failed to shutdown store '${name}':`, error);
             }
         }
 
         this.stores.clear();
-        }
+    }
 
     /**
      * Search documents using the query engine
@@ -152,8 +152,9 @@ export class StoreBasedQueryEngine implements IQueryEngine {
     /**
      * Execute a query (alias for search for interface compatibility)
      */
-    execute(query: DomainQuery): Set<DocumentId> {
-        return this.search(query);
+    execute(query: DomainQuery): Set<string> {
+        const result = this.search(query);
+        return new Set(Array.from(result).map(id => id.value));
     }
 
     /**
@@ -216,7 +217,7 @@ export class StoreBasedQueryEngine implements IQueryEngine {
         // Reload from persistent stores
         await this.loadDataToMemory(indexName);
 
-        }
+    }
 
     /**
      * Get query execution statistics
@@ -267,7 +268,7 @@ export class StoreBasedQueryEngine implements IQueryEngine {
         for (const [name, store] of this.stores) {
             try {
                 await store.compact();
-                } catch (error) {
+            } catch (error) {
                 console.error(`❌ Failed to compact store '${name}':`, error);
             }
         }
@@ -275,7 +276,7 @@ export class StoreBasedQueryEngine implements IQueryEngine {
         // Clear old query stats
         this.queryStats.clear();
 
-        }
+    }
 
     // Private methods
     private async loadDataToMemory(indexName?: string): Promise<void> {
@@ -303,7 +304,7 @@ export class StoreBasedQueryEngine implements IQueryEngine {
             const filter: DocumentFilter = indexName ? { indexName } : {};
             const documents = await store.find(filter);
 
-            ` : ''}`);
+            console.log(`Loaded ${documents.length} documents from store '${storeName}'${indexName ? ` for index '${indexName}'` : ''}`);
 
             // Add documents to in-memory store in batches
             const batchSize = 1000;

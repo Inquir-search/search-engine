@@ -6,6 +6,7 @@ import { QueryText, IndexName } from '../../domain/valueObjects/index.js';
  */
 export class SearchQuery {
     public readonly queryText: QueryText;
+    public readonly query: any; // Raw query object for compatibility
     public readonly indexName: IndexName;
     public readonly from: number;
     public readonly size: number;
@@ -15,6 +16,7 @@ export class SearchQuery {
 
     constructor({
         queryText,
+        query,
         indexName,
         from = 0,
         size = 10,
@@ -23,6 +25,7 @@ export class SearchQuery {
         sort = []
     }: {
         queryText: QueryText;
+        query?: any;
         indexName: IndexName;
         from?: number;
         size?: number;
@@ -39,6 +42,7 @@ export class SearchQuery {
         }
 
         this.queryText = queryText;
+        this.query = query || queryText.value; // Use provided query or fallback to queryText
         this.indexName = indexName;
         this.from = from;
         this.size = size;

@@ -57,7 +57,7 @@ export default class StreamingPersistence {
             this.enableShardedStorage = options.indexShardingConfig.enableShardedStorage;
             this.maxParallelShards = Math.min(options.indexShardingConfig.numShards || 8, options.maxParallelShards ?? persistenceConfig.maxParallelShards);
         } else {
-            this.enableShardedStorage = options.enableShardedStorage ?? persistenceConfig.enableShardedStorage;
+            this.enableShardedStorage = options.enableShardedStorage ?? persistenceConfig.enableShardedStorage ?? false;
             this.maxParallelShards = options.maxParallelShards ?? persistenceConfig.maxParallelShards;
         }
 
@@ -169,7 +169,7 @@ export default class StreamingPersistence {
                         const metadata = JSON.parse(fileSystemManager.readFileSync(metadataPath));
 
                         // Try to load snapshot data
-                        let snapshot = null;
+                        let snapshot: any = null;
                         if (fileSystemManager.pathExists(snapshotPath)) {
                             try {
                                 const snapshotData = fileSystemManager.readFileSync(snapshotPath);
@@ -239,7 +239,9 @@ export default class StreamingPersistence {
                                     facetFields: metadata.facetFields || []
                                 };
                             }
-                            snapshot.documents = aggregatedDocuments;
+                            if (snapshot) {
+                                snapshot.documents = aggregatedDocuments;
+                            }
                             console.log(`✅ Aggregated ${aggregatedDocuments.size} total documents for index '${indexName}'`);
                         }
 
@@ -308,7 +310,8 @@ export default class StreamingPersistence {
 
         // Distribute documents across shards
         for (const doc of documents) {
-            const shardIndex = this.shardManager.getShardForDoc(doc.id || doc._id || '');
+            const docData = doc as any;
+            const shardIndex = this.shardManager.getShardForDoc(docData.id || docData._id || '');
             shardDocuments[shardIndex].push(doc);
         }
 
@@ -321,7 +324,17 @@ export default class StreamingPersistence {
         // Create sharded state
         const shardedState: ShardedStateInput = {
             shards: shardIndexes,
-            documents: shardDocuments
+            documents: shardDocuments,
+            docLengths: shardDocuments.map(shard => shard.map(() => 0)), // Placeholder docLengths
+            metadata: {
+                totalDocs: documents.length,
+                avgDocLength: 0,
+                lastFlush: new Date().toISOString(),
+                documentCount: documents.length,
+                indexCount: 1,
+                shardMetadata: {},
+                isSharded: true
+            }
         };
 
         // Save using sharded snapshot manager
@@ -358,7 +371,14 @@ export default class StreamingPersistence {
     async clearData(): Promise<void> {
         try {
             if (this.fileSystemManager.pathExists(this.baseDir)) {
-                this.fileSystemManager.removeDirectoryRecursive?.(this.baseDir);
+                // Use fs.rmSync as alternative to removeDirectoryRecursive
+                const fs = require('fs');
+                if (fs.rmSync) {
+                    fs.rmSync(this.baseDir, { recursive: true, force: true });
+                } else {
+                    // Fallback for older Node.js versions
+                    fs.rmdirSync(this.baseDir, { recursive: true });
+                }
             }
         } catch {
             // Ignore errors – tests only check that the method exists

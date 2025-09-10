@@ -56,13 +56,12 @@ describe('Server Search Flow Debug Tests', () => {
             total: searchEngineResult.total || 0
         });
 
-        // Test 4: Test the QueryEngine directly (skip for now as we're using SharedMemoryWorkerPool)
-        // const queryEngine = (searchEngine as any).indices['test'].queryEngine;
-        // const queryEngineResult = queryEngine.search('*', { size: 10 });
+        // Test 4: Test the QueryEngine directly
+        const queryEngine = (searchEngine as any).indices['default'].queryEngine;
+        const queryEngineResult = queryEngine.search('*', { size: 10 });
         console.log('QueryEngine wildcard result:', {
-            hits: 0,
-            total: 0,
-            note: 'Skipped - using SharedMemoryWorkerPool'
+            hits: queryEngineResult.hits?.length || 0,
+            total: queryEngineResult.total || 0
         });
 
         // All should work
@@ -119,13 +118,12 @@ describe('Server Search Flow Debug Tests', () => {
             total: searchEngineResult.total || 0
         });
 
-        // Test 4: Test the QueryEngine directly (skip for now as we're using SharedMemoryWorkerPool)
-        // const queryEngine = (searchEngine as any).indices['test'].queryEngine;
-        // const queryEngineResult = queryEngine.search('Rick', { size: 10 });
+        // Test 4: Test the QueryEngine directly
+        const queryEngine = (searchEngine as any).indices['default'].queryEngine;
+        const queryEngineResult = queryEngine.search('Rick', { size: 10 });
         console.log('QueryEngine string result:', {
-            hits: 0,
-            total: 0,
-            note: 'Skipped - using SharedMemoryWorkerPool'
+            hits: queryEngineResult.hits?.length || 0,
+            total: queryEngineResult.total || 0
         });
 
         // All should work

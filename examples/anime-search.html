@@ -397,7 +397,7 @@
         <div class="search-section">
             <div class="search-box">
                 <input type="text" id="searchInput" class="search-input"
-                    placeholder="Search anime by title, genre, studio... (supports typos, word prefixes & partial matches)">
+                    placeholder="Search anime by title, genre, studio... (supports typos, partial matches, and multi-word searches)">
                 <button onclick="performSearch()" class="search-btn">🔍 Search</button>
             </div>
         </div>
@@ -637,39 +637,145 @@
 
                 // Add text search if provided
                 if (searchTerm) {
-                    query = {
-                        bool: {
-                            should: [
-                                // Exact match queries (highest boost)
-                                { match: { field: 'name', value: searchTerm, boost: 4.0 } },
-                                { match: { field: 'type', value: searchTerm, boost: 3.0 } },
-                                { match: { field: 'status', value: searchTerm, boost: 3.0 } },
+                    // Split search term into individual words for more flexible matching
+                    const searchWords = searchTerm.toLowerCase().trim().split(/\s+/).filter(word => word.length > 0);
 
-                                // Field prefix queries (start of field)
-                                { prefix: { field: 'name', value: searchTerm, boost: 3.5 } },
-                                { prefix: { field: 'genres', value: searchTerm, boost: 2.0 } },
-                                { prefix: { field: 'studios', value: searchTerm, boost: 2.0 } },
+                    if (searchWords.length === 0) {
+                        query = { match_all: {} };
+                    } else if (searchWords.length === 1) {
+                        // Single word search - enhanced fuzzy matching
+                        const word = searchWords[0];
+                        query = {
+                            bool: {
+                                should: [
+                                    // Exact matches (highest priority)
+                                    { match: { field: 'name', value: word, boost: 5.0 } },
+                                    { match: { field: 'type', value: word, boost: 4.0 } },
+                                    { match: { field: 'status', value: word, boost: 4.0 } },
 
-                                // Wildcard queries for word prefixes anywhere in text
-                                { wildcard: { field: 'name', value: `*${searchTerm}*`, boost: 2.5 } },
-                                { wildcard: { field: 'genres', value: `*${searchTerm}*`, boost: 2.0 } },
-                                { wildcard: { field: 'studios', value: `*${searchTerm}*`, boost: 2.0 } },
-                                { wildcard: { field: 'synopsis', value: `*${searchTerm}*`, boost: 1.5 } },
+                                    // Prefix matches (starts with)
+                                    { prefix: { field: 'name', value: word, boost: 4.5 } },
+                                    { prefix: { field: 'genres', value: word, boost: 3.0 } },
+                                    { prefix: { field: 'studios', value: word, boost: 3.0 } },
 
-                                // Word prefix patterns (space + query for word boundaries)
-                                { wildcard: { field: 'name', value: `* ${searchTerm}*`, boost: 3.0 } },
-                                { wildcard: { field: 'synopsis', value: `* ${searchTerm}*`, boost: 1.8 } },
+                                    // Contains matches (anywhere in text)
+                                    { wildcard: { field: 'name', value: `*${word}*`, boost: 3.5 } },
+                                    { wildcard: { field: 'genres', value: `*${word}*`, boost: 2.5 } },
+                                    { wildcard: { field: 'studios', value: `*${word}*`, boost: 2.5 } },
+                                    { wildcard: { field: 'synopsis', value: `*${word}*`, boost: 2.0 } },
 
-                                // Fuzzy queries (typo tolerance)
-                                { fuzzy: { field: 'name', value: searchTerm, fuzziness: 2, boost: 1.5 } },
-                                { fuzzy: { field: 'type', value: searchTerm, fuzziness: 1, boost: 1.2 } },
-                                { fuzzy: { field: 'genres', value: searchTerm, fuzziness: 2, boost: 1.0 } },
-                                { fuzzy: { field: 'studios', value: searchTerm, fuzziness: 2, boost: 1.0 } },
-                                { fuzzy: { field: 'status', value: searchTerm, fuzziness: 1, boost: 1.0 } }
-                            ],
-                            minimum_should_match: 1
-                        }
-                    };
+                                    // Enhanced fuzzy matches with multiple fuzziness levels
+                                    { fuzzy: { field: 'name', value: word, fuzziness: 'AUTO', boost: 2.5 } },
+                                    { fuzzy: { field: 'genres', value: word, fuzziness: 'AUTO', boost: 2.0 } },
+                                    { fuzzy: { field: 'studios', value: word, fuzziness: 'AUTO', boost: 2.0 } },
+                                    { fuzzy: { field: 'synopsis', value: word, fuzziness: 'AUTO', boost: 1.5 } },
+                                    { fuzzy: { field: 'type', value: word, fuzziness: 1, boost: 2.0 } },
+                                    { fuzzy: { field: 'status', value: word, fuzziness: 1, boost: 2.0 } },
+
+                                    // Additional fuzzy matches with higher fuzziness for very flexible matching
+                                    { fuzzy: { field: 'name', value: word, fuzziness: 2, boost: 1.5 } },
+                                    { fuzzy: { field: 'genres', value: word, fuzziness: 2, boost: 1.2 } },
+                                    { fuzzy: { field: 'studios', value: word, fuzziness: 2, boost: 1.2 } },
+                                    { fuzzy: { field: 'synopsis', value: word, fuzziness: 2, boost: 1.0 } }
+                                ],
+                                minimum_should_match: 1
+                            }
+                        };
+                    } else {
+                        // Multi-word search - word order doesn't matter, enhanced fuzzy search
+                        const phrase = searchWords.join(' ');
+                        query = {
+                            bool: {
+                                should: [
+                                    // Exact phrase match (highest priority) - word order matters here
+                                    { match_phrase: { field: 'name', value: phrase, boost: 6.0 } },
+                                    { match_phrase: { field: 'synopsis', value: phrase, boost: 3.0 } },
+
+                                    // All words must appear (AND logic) - word order doesn't matter
+                                    {
+                                        bool: {
+                                            must: searchWords.map(word => ({
+                                                bool: {
+                                                    should: [
+                                                        // Exact matches
+                                                        { match: { field: 'name', value: word, boost: 4.0 } },
+                                                        { match: { field: 'genres', value: word, boost: 3.0 } },
+                                                        { match: { field: 'studios', value: word, boost: 3.0 } },
+                                                        { match: { field: 'synopsis', value: word, boost: 2.5 } },
+                                                        { match: { field: 'type', value: word, boost: 3.5 } },
+                                                        { match: { field: 'status', value: word, boost: 3.5 } },
+
+                                                        // Prefix matches
+                                                        { prefix: { field: 'name', value: word, boost: 3.5 } },
+                                                        { prefix: { field: 'genres', value: word, boost: 2.5 } },
+                                                        { prefix: { field: 'studios', value: word, boost: 2.5 } },
+
+                                                        // Contains matches
+                                                        { wildcard: { field: 'name', value: `*${word}*`, boost: 3.0 } },
+                                                        { wildcard: { field: 'genres', value: `*${word}*`, boost: 2.0 } },
+                                                        { wildcard: { field: 'studios', value: `*${word}*`, boost: 2.0 } },
+                                                        { wildcard: { field: 'synopsis', value: `*${word}*`, boost: 1.5 } },
+
+                                                        // Enhanced fuzzy matches with different fuzziness levels
+                                                        { fuzzy: { field: 'name', value: word, fuzziness: 'AUTO', boost: 2.5 } },
+                                                        { fuzzy: { field: 'genres', value: word, fuzziness: 'AUTO', boost: 2.0 } },
+                                                        { fuzzy: { field: 'studios', value: word, fuzziness: 'AUTO', boost: 2.0 } },
+                                                        { fuzzy: { field: 'synopsis', value: word, fuzziness: 'AUTO', boost: 1.5 } },
+                                                        { fuzzy: { field: 'type', value: word, fuzziness: 1, boost: 2.0 } },
+                                                        { fuzzy: { field: 'status', value: word, fuzziness: 1, boost: 2.0 } }
+                                                    ],
+                                                    minimum_should_match: 1
+                                                }
+                                            })),
+                                            boost: 5.0
+                                        }
+                                    },
+
+                                    // Phrase with reversed word order (for flexibility)
+                                    ...(searchWords.length === 2 ? [
+                                        { match_phrase: { field: 'name', value: searchWords.reverse().join(' '), boost: 5.5 } },
+                                        { match_phrase: { field: 'synopsis', value: searchWords.reverse().join(' '), boost: 2.5 } }
+                                    ] : []),
+
+                                    // Some words must appear (OR logic with lower boost) - word order doesn't matter
+                                    {
+                                        bool: {
+                                            should: searchWords.flatMap(word => [
+                                                // Exact matches
+                                                { match: { field: 'name', value: word, boost: 3.0 } },
+                                                { match: { field: 'genres', value: word, boost: 2.5 } },
+                                                { match: { field: 'studios', value: word, boost: 2.5 } },
+                                                { match: { field: 'synopsis', value: word, boost: 2.0 } },
+                                                { match: { field: 'type', value: word, boost: 2.5 } },
+                                                { match: { field: 'status', value: word, boost: 2.5 } },
+
+                                                // Prefix matches
+                                                { prefix: { field: 'name', value: word, boost: 2.5 } },
+                                                { prefix: { field: 'genres', value: word, boost: 2.0 } },
+                                                { prefix: { field: 'studios', value: word, boost: 2.0 } },
+
+                                                // Contains matches
+                                                { wildcard: { field: 'name', value: `*${word}*`, boost: 2.0 } },
+                                                { wildcard: { field: 'genres', value: `*${word}*`, boost: 1.5 } },
+                                                { wildcard: { field: 'studios', value: `*${word}*`, boost: 1.5 } },
+                                                { wildcard: { field: 'synopsis', value: `*${word}*`, boost: 1.0 } },
+
+                                                // Enhanced fuzzy matches
+                                                { fuzzy: { field: 'name', value: word, fuzziness: 'AUTO', boost: 1.8 } },
+                                                { fuzzy: { field: 'genres', value: word, fuzziness: 'AUTO', boost: 1.5 } },
+                                                { fuzzy: { field: 'studios', value: word, fuzziness: 'AUTO', boost: 1.5 } },
+                                                { fuzzy: { field: 'synopsis', value: word, fuzziness: 'AUTO', boost: 1.2 } },
+                                                { fuzzy: { field: 'type', value: word, fuzziness: 1, boost: 1.5 } },
+                                                { fuzzy: { field: 'status', value: word, fuzziness: 1, boost: 1.5 } }
+                                            ]),
+                                            minimum_should_match: Math.max(1, Math.floor(searchWords.length / 2))
+                                        }
+                                    }
+                                ],
+                                minimum_should_match: 1
+                            }
+                        };
+                    }
                 }
 
                 // Add facet filters
@@ -691,45 +797,150 @@
                 // Combine text search with filters
                 if (filters.length > 0) {
                     if (searchTerm) {
+                        // Use the same flexible search logic as above, but wrap with filters
+                        const searchWords = searchTerm.toLowerCase().trim().split(/\s+/).filter(word => word.length > 0);
+                        let searchQuery;
+
+                        if (searchWords.length === 0) {
+                            searchQuery = { match_all: {} };
+                        } else if (searchWords.length === 1) {
+                            // Single word search with enhanced fuzzy matching
+                            const word = searchWords[0];
+                            searchQuery = {
+                                bool: {
+                                    should: [
+                                        // Exact matches (highest priority)
+                                        { match: { field: 'name', value: word, boost: 5.0 } },
+                                        { match: { field: 'type', value: word, boost: 4.0 } },
+                                        { match: { field: 'status', value: word, boost: 4.0 } },
+
+                                        // Prefix matches (starts with)
+                                        { prefix: { field: 'name', value: word, boost: 4.5 } },
+                                        { prefix: { field: 'genres', value: word, boost: 3.0 } },
+                                        { prefix: { field: 'studios', value: word, boost: 3.0 } },
+
+                                        // Contains matches (anywhere in text)
+                                        { wildcard: { field: 'name', value: `*${word}*`, boost: 3.5 } },
+                                        { wildcard: { field: 'genres', value: `*${word}*`, boost: 2.5 } },
+                                        { wildcard: { field: 'studios', value: `*${word}*`, boost: 2.5 } },
+                                        { wildcard: { field: 'synopsis', value: `*${word}*`, boost: 2.0 } },
+
+                                        // Enhanced fuzzy matches with multiple fuzziness levels
+                                        { fuzzy: { field: 'name', value: word, fuzziness: 'AUTO', boost: 2.5 } },
+                                        { fuzzy: { field: 'genres', value: word, fuzziness: 'AUTO', boost: 2.0 } },
+                                        { fuzzy: { field: 'studios', value: word, fuzziness: 'AUTO', boost: 2.0 } },
+                                        { fuzzy: { field: 'synopsis', value: word, fuzziness: 'AUTO', boost: 1.5 } },
+                                        { fuzzy: { field: 'type', value: word, fuzziness: 1, boost: 2.0 } },
+                                        { fuzzy: { field: 'status', value: word, fuzziness: 1, boost: 2.0 } },
+
+                                        // Additional fuzzy matches with higher fuzziness for very flexible matching
+                                        { fuzzy: { field: 'name', value: word, fuzziness: 2, boost: 1.5 } },
+                                        { fuzzy: { field: 'genres', value: word, fuzziness: 2, boost: 1.2 } },
+                                        { fuzzy: { field: 'studios', value: word, fuzziness: 2, boost: 1.2 } },
+                                        { fuzzy: { field: 'synopsis', value: word, fuzziness: 2, boost: 1.0 } }
+                                    ],
+                                    minimum_should_match: 1
+                                }
+                            };
+                        } else {
+                            // Multi-word search with enhanced fuzzy matching and word order flexibility
+                            const phrase = searchWords.join(' ');
+                            searchQuery = {
+                                bool: {
+                                    should: [
+                                        // Exact phrase match (highest priority)
+                                        { match_phrase: { field: 'name', value: phrase, boost: 6.0 } },
+                                        { match_phrase: { field: 'synopsis', value: phrase, boost: 3.0 } },
+
+                                        // All words must appear (AND logic) - word order doesn't matter
+                                        {
+                                            bool: {
+                                                must: searchWords.map(word => ({
+                                                    bool: {
+                                                        should: [
+                                                            // Exact matches
+                                                            { match: { field: 'name', value: word, boost: 4.0 } },
+                                                            { match: { field: 'genres', value: word, boost: 3.0 } },
+                                                            { match: { field: 'studios', value: word, boost: 3.0 } },
+                                                            { match: { field: 'synopsis', value: word, boost: 2.5 } },
+                                                            { match: { field: 'type', value: word, boost: 3.5 } },
+                                                            { match: { field: 'status', value: word, boost: 3.5 } },
+
+                                                            // Prefix matches
+                                                            { prefix: { field: 'name', value: word, boost: 3.5 } },
+                                                            { prefix: { field: 'genres', value: word, boost: 2.5 } },
+                                                            { prefix: { field: 'studios', value: word, boost: 2.5 } },
+
+                                                            // Contains matches
+                                                            { wildcard: { field: 'name', value: `*${word}*`, boost: 3.0 } },
+                                                            { wildcard: { field: 'genres', value: `*${word}*`, boost: 2.0 } },
+                                                            { wildcard: { field: 'studios', value: `*${word}*`, boost: 2.0 } },
+                                                            { wildcard: { field: 'synopsis', value: `*${word}*`, boost: 1.5 } },
+
+                                                            // Enhanced fuzzy matches
+                                                            { fuzzy: { field: 'name', value: word, fuzziness: 'AUTO', boost: 2.5 } },
+                                                            { fuzzy: { field: 'genres', value: word, fuzziness: 'AUTO', boost: 2.0 } },
+                                                            { fuzzy: { field: 'studios', value: word, fuzziness: 'AUTO', boost: 2.0 } },
+                                                            { fuzzy: { field: 'synopsis', value: word, fuzziness: 'AUTO', boost: 1.5 } },
+                                                            { fuzzy: { field: 'type', value: word, fuzziness: 1, boost: 2.0 } },
+                                                            { fuzzy: { field: 'status', value: word, fuzziness: 1, boost: 2.0 } }
+                                                        ],
+                                                        minimum_should_match: 1
+                                                    }
+                                                })),
+                                                boost: 5.0
+                                            }
+                                        },
+
+                                        // Phrase with reversed word order (for flexibility)
+                                        ...(searchWords.length === 2 ? [
+                                            { match_phrase: { field: 'name', value: searchWords.slice().reverse().join(' '), boost: 5.5 } },
+                                            { match_phrase: { field: 'synopsis', value: searchWords.slice().reverse().join(' '), boost: 2.5 } }
+                                        ] : []),
+
+                                        // Some words must appear (OR logic with lower boost)
+                                        {
+                                            bool: {
+                                                should: searchWords.flatMap(word => [
+                                                    // Exact matches
+                                                    { match: { field: 'name', value: word, boost: 3.0 } },
+                                                    { match: { field: 'genres', value: word, boost: 2.5 } },
+                                                    { match: { field: 'studios', value: word, boost: 2.5 } },
+                                                    { match: { field: 'synopsis', value: word, boost: 2.0 } },
+                                                    { match: { field: 'type', value: word, boost: 2.5 } },
+                                                    { match: { field: 'status', value: word, boost: 2.5 } },
+
+                                                    // Prefix matches
+                                                    { prefix: { field: 'name', value: word, boost: 2.5 } },
+                                                    { prefix: { field: 'genres', value: word, boost: 2.0 } },
+                                                    { prefix: { field: 'studios', value: word, boost: 2.0 } },
+
+                                                    // Contains matches
+                                                    { wildcard: { field: 'name', value: `*${word}*`, boost: 2.0 } },
+                                                    { wildcard: { field: 'genres', value: `*${word}*`, boost: 1.5 } },
+                                                    { wildcard: { field: 'studios', value: `*${word}*`, boost: 1.5 } },
+                                                    { wildcard: { field: 'synopsis', value: `*${word}*`, boost: 1.0 } },
+
+                                                    // Enhanced fuzzy matches
+                                                    { fuzzy: { field: 'name', value: word, fuzziness: 'AUTO', boost: 1.8 } },
+                                                    { fuzzy: { field: 'genres', value: word, fuzziness: 'AUTO', boost: 1.5 } },
+                                                    { fuzzy: { field: 'studios', value: word, fuzziness: 'AUTO', boost: 1.5 } },
+                                                    { fuzzy: { field: 'synopsis', value: word, fuzziness: 'AUTO', boost: 1.2 } },
+                                                    { fuzzy: { field: 'type', value: word, fuzziness: 1, boost: 1.5 } },
+                                                    { fuzzy: { field: 'status', value: word, fuzziness: 1, boost: 1.5 } }
+                                                ]),
+                                                minimum_should_match: Math.max(1, Math.floor(searchWords.length / 2))
+                                            }
+                                        }
+                                    ],
+                                    minimum_should_match: 1
+                                }
+                            };
+                        }
+
                         query = {
                             bool: {
-                                must: [
-                                    // Use the same enhanced search structure with wildcards
-                                    {
-                                        bool: {
-                                            should: [
-                                                // Exact match queries (highest boost)
-                                                { match: { field: 'name', value: searchTerm, boost: 4.0 } },
-                                                { match: { field: 'type', value: searchTerm, boost: 3.0 } },
-                                                { match: { field: 'status', value: searchTerm, boost: 3.0 } },
-
-                                                // Field prefix queries (start of field)
-                                                { prefix: { field: 'name', value: searchTerm, boost: 3.5 } },
-                                                { prefix: { field: 'genres', value: searchTerm, boost: 2.0 } },
-                                                { prefix: { field: 'studios', value: searchTerm, boost: 2.0 } },
-
-                                                // Wildcard queries for word prefixes anywhere in text
-                                                { wildcard: { field: 'name', value: `*${searchTerm}*`, boost: 2.5 } },
-                                                { wildcard: { field: 'genres', value: `*${searchTerm}*`, boost: 2.0 } },
-                                                { wildcard: { field: 'studios', value: `*${searchTerm}*`, boost: 2.0 } },
-                                                { wildcard: { field: 'synopsis', value: `*${searchTerm}*`, boost: 1.5 } },
-
-                                                // Word prefix patterns (space + query for word boundaries)
-                                                { wildcard: { field: 'name', value: `* ${searchTerm}*`, boost: 3.0 } },
-                                                { wildcard: { field: 'synopsis', value: `* ${searchTerm}*`, boost: 1.8 } },
-
-                                                // Fuzzy queries (typo tolerance)
-                                                { fuzzy: { field: 'name', value: searchTerm, fuzziness: 2, boost: 1.5 } },
-                                                { fuzzy: { field: 'type', value: searchTerm, fuzziness: 1, boost: 1.2 } },
-                                                { fuzzy: { field: 'genres', value: searchTerm, fuzziness: 2, boost: 1.0 } },
-                                                { fuzzy: { field: 'studios', value: searchTerm, fuzziness: 2, boost: 1.0 } },
-                                                { fuzzy: { field: 'status', value: searchTerm, fuzziness: 1, boost: 1.0 } }
-                                            ],
-                                            minimum_should_match: 1
-                                        }
-                                    },
-                                    ...filters
-                                ]
+                                must: [searchQuery, ...filters]
                             }
                         };
                     } else {

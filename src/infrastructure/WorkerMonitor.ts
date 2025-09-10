@@ -268,7 +268,7 @@ export default class WorkerMonitor extends EventEmitter {
         this.healthStatus = HealthStatus.healthy();
         this.performanceMetrics = PerformanceMetrics.zero();
 
-        }
+    }
 
     start(): void {
         // Start health checks
@@ -292,20 +292,20 @@ export default class WorkerMonitor extends EventEmitter {
             this.recordTaskSubmitted(task);
         });
 
-        }
+    }
 
     stop(): void {
         if (this.healthCheckInterval) {
-            clearInterval(this.healthCheckInterval);
+            clearInterval(this.healthCheckInterval as any);
             this.healthCheckInterval = null;
         }
 
         if (this.performanceInterval) {
-            clearInterval(this.performanceInterval);
+            clearInterval(this.performanceInterval as any);
             this.performanceInterval = null;
         }
 
-        }
+    }
 
     private performHealthCheck(): void {
         const now = Date.now();
@@ -328,7 +328,7 @@ export default class WorkerMonitor extends EventEmitter {
                 issues.push({
                     type: 'worker_health',
                     workerId: worker.workerId,
-                    issue: health.issue,
+                    issue: health.issue || undefined,
                     severity: health.severity,
                     current: 0,
                     threshold: 0

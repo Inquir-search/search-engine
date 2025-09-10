@@ -1,4 +1,4 @@
-import { SearchEngine } from './SearchEngine';
+import SearchEngine from './SearchEngine';
 
 export class AutoPersistenceManager {
     private readonly searchEngine: SearchEngine;
@@ -47,10 +47,11 @@ export class AutoPersistenceManager {
     async performAutoSave(): Promise<void> {
         if (!this.enabled) return;
 
-        const promises = [];
+        const promises: Promise<void>[] = [];
         for (const indexName of this.searchEngine.listIndices()) {
             promises.push(this.searchEngine.flush(indexName).catch(error => {
-                }));
+                console.error(`Failed to flush index ${indexName}:`, error);
+            }));
         }
 
         await Promise.all(promises);

@@ -53,7 +53,7 @@ export class CachedDocumentStore extends DocumentStore {
     private prefetchQueue: Set<string> = new Set();
 
     constructor(persistentStore: DocumentStore, config: Partial<CacheConfig> = {}) {
-        super(persistentStore.options || {});
+        super((persistentStore as any).options || {});
 
         this.persistentStore = persistentStore;
         this.config = {
@@ -83,7 +83,7 @@ export class CachedDocumentStore extends DocumentStore {
 
     async initialize(): Promise<void> {
         await this.persistentStore.initialize();
-        }
+    }
 
     async shutdown(): Promise<void> {
         // Flush write-back queue
@@ -99,7 +99,7 @@ export class CachedDocumentStore extends DocumentStore {
 
         await this.persistentStore.shutdown();
         this.cache.clear();
-        }
+    }
 
     async isHealthy(): Promise<boolean> {
         return await this.persistentStore.isHealthy();
@@ -420,7 +420,7 @@ export class CachedDocumentStore extends DocumentStore {
                 keyToEvict = this.findFIFOKey();
                 break;
             default:
-                keyToEvict = this.cache.keys().next().value;
+                keyToEvict = this.cache.keys().next().value || '';
         }
 
         const entry = this.cache.get(keyToEvict);

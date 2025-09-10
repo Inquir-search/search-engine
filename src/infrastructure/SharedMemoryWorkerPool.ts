@@ -397,7 +397,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     }
 
     // Public API methods that delegate to workers for proper document access
-    async search(indexName: string, query: string, context: SearchContext = {}): Promise<SearchResult> {
+    async search(indexName: string, query: string | any, context: SearchContext = {}): Promise<SearchResult> {
         try {
             // Debug: Log search request
             console.log(`🔍 SharedMemoryWorkerPool.search called for index '${indexName}' with query:`, JSON.stringify(query));
@@ -466,10 +466,16 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
 
                 // Calculate aggregations if requested
                 let aggregations = {};
-                if (context.aggregations || context.aggs) {
+                if (context.aggregations || context.aggs || {}) {
                     console.log(`🔍 SharedMemoryWorkerPool fallback: calculating aggregations with ${hits.length} hits`);
-                    console.log(`🔍 First few hits for aggregation:`, hits.slice(0, 3).map(h => ({ id: h.id, species: h.species, location: h.location })));
-                    aggregations = this.calculateAggregations(context.aggregations || context.aggs, hits, indexName);
+                    console.log(`🔍 First few hits for aggregation:`, hits.slice(0, 3).map(h => ({
+                        id: h.id,
+                        genres: h.genres,
+                        type: h.type,
+                        status: h.status,
+                        name: h.name
+                    })));
+                    aggregations = this.calculateAggregations(context.aggregations || context.aggs || {}, hits, indexName);
                 }
 
                 return {
@@ -513,10 +519,16 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
 
                 // Calculate aggregations if requested
                 let aggregations = {};
-                if (context.aggregations || context.aggs) {
+                if (context.aggregations || context.aggs || {}) {
                     console.log(`🔍 SharedMemoryWorkerPool fallback: calculating aggregations with ${hits.length} hits`);
-                    console.log(`🔍 First few hits for aggregation:`, hits.slice(0, 3).map(h => ({ id: h.id, species: h.species, location: h.location })));
-                    aggregations = this.calculateAggregations(context.aggregations || context.aggs, hits, indexName);
+                    console.log(`🔍 First few hits for aggregation:`, hits.slice(0, 3).map(h => ({
+                        id: h.id,
+                        genres: h.genres,
+                        type: h.type,
+                        status: h.status,
+                        name: h.name
+                    })));
+                    aggregations = this.calculateAggregations(context.aggregations || context.aggs || {}, hits, indexName);
                 }
 
                 return {
@@ -540,13 +552,20 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
                 indexName: indexName
             });
 
-            if (indexExistsResult.total > 0) {
+            // Also check if we have in-memory docs for this index (fallback mechanism)
+            const inMemoryMap: Map<string, any[]> = (this as any)['__inMemoryDocs'] || new Map();
+            const inMemoryDocs = inMemoryMap.get(indexName) || [];
+
+            // Also check if the index exists in our metadata
+            const indexExistsInMetadata = this.indexMetadata.has(indexName);
+
+            if (indexExistsResult.total > 0 || inMemoryDocs.length > 0 || indexExistsInMetadata) {
                 // Use SearchEngine for proper query processing
                 const result = this.sharedMemoryStore.search(query, {
                     from: context.from || 0,
                     size: context.size || 10,
                     indexName: indexName,
-                    aggregations: context.aggregations || context.aggs
+                    aggregations: context.aggregations || context.aggs || {}
                 });
 
                 return {
@@ -559,155 +578,40 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
                     facets: result.facets || {}
                 };
             } else {
-                // For non-existent indices, we need to go through the worker path to get proper error handling
-                // Don't return early, let it fall through to the worker search logic
+                // Index doesn't exist - return error
+                return {
+                    success: false,
+                    error: `Index '${indexName}' not found`,
+                    hits: [],
+                    total: 0,
+                    from: 0,
+                    size: 0,
+                    aggregations: {},
+                    facets: {}
+                };
             }
 
+        } catch (error) {
+            console.error('Search error:', error);
+            return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+        }
+    }
 
+    private async searchShardedIndex(indexName: string, query: string | any, context: SearchContext): Promise<SearchResult> {
+        // Check if this is a sharded index by looking at index metadata
+        const indexMetadata = this.indexMetadata.get(indexName);
+        const isSharded = indexMetadata?.enableShardedStorage === true;
 
-            // Check if this is a sharded index by looking at index metadata
-            const indexMetadata = this.indexMetadata.get(indexName);
-            const isSharded = indexMetadata?.enableShardedStorage === true;
+        if (isSharded && this.workers.length > 1) {
+            // For sharded indices, search across all workers and aggregate results
+            console.log(`🔍 Searching sharded index '${indexName}' across ${this.workers.length} workers`);
 
-            if (isSharded && this.workers.length > 1) {
-                // For sharded indices, search across all workers and aggregate results
-                console.log(`🔍 Searching sharded index '${indexName}' across ${this.workers.length} workers`);
-
-                const searchPromises = this.workers.map((worker, workerIndex) => {
-                    const taskId = ++this.taskCounter;
-
-                    return new Promise<SearchResult>((resolve, reject) => {
-                        const timeout = setTimeout(() => {
-                            reject(new Error(`Search timeout on worker ${workerIndex}`));
-                        }, this.config.taskTimeout);
-
-                        // Send search task to worker
-                        worker.worker.postMessage({
-                            type: 'EXECUTE_TASK',
-                            taskId,
-                            operation: {
-                                type: 'SEARCH',
-                                indexName,
-                                data: {
-                                    query,
-                                    context
-                                }
-                            }
-                        });
-
-                        // Handle response
-                        const handler = (message: WorkerMessage) => {
-                            if (message.type === 'TASK_COMPLETE' && message.taskId === taskId) {
-                                clearTimeout(timeout);
-                                worker.worker.removeListener('message', handler);
-
-                                const result = message.result;
-                                resolve({
-                                    success: result.success !== false,
-                                    results: result.hits || [],
-                                    total: result.total || 0,
-                                    from: result.from || 0,
-                                    size: result.size || 10,
-                                    aggregations: result.aggregations || {},
-                                    facets: result.facets || {},
-                                    error: result.error
-                                });
-                            } else if (message.type === 'TASK_ERROR' && message.taskId === taskId) {
-                                clearTimeout(timeout);
-                                worker.worker.removeListener('message', handler);
-                                reject(new Error(message.error || `Search failed on worker ${workerIndex}`));
-                            }
-                        };
-
-                        worker.worker.on('message', handler);
-                    });
-                });
-
-                try {
-                    // Wait for all workers to complete
-                    const results = await Promise.all(searchPromises);
-
-                    // Aggregate results from all workers
-                    const aggregatedHits: any[] = [];
-                    let totalDocs = 0;
-                    const aggregatedAggregations: any = {};
-                    const aggregatedFacets: any = {};
-                    let hasError = false;
-                    let errorMessage = '';
-
-                    for (const result of results) {
-                        console.log(`🔍 Worker result:`, result);
-                        if (result.success) {
-                            // Handle successful results
-                            if (result.results) {
-                                aggregatedHits.push(...result.results);
-                                totalDocs += result.total || 0;
-                            } else if (result.hits) {
-                                // Handle direct hits format
-                                aggregatedHits.push(...result.hits);
-                                totalDocs += result.total || 0;
-                            }
-
-                            // Merge aggregations and facets (simplified)
-                            Object.assign(aggregatedAggregations, result.aggregations || {});
-                            Object.assign(aggregatedFacets, result.facets || {});
-                        } else if (!result.success && result.error) {
-                            console.log(`🔍 Worker returned error:`, result.error);
-                            hasError = true;
-                            errorMessage = result.error;
-                        }
-                    }
-
-                    // If any worker returned an error, return the error
-                    if (hasError) {
-                        return {
-                            success: false,
-                            error: errorMessage,
-                            hits: [],
-                            total: 0,
-                            from: 0,
-                            size: 0,
-                            aggregations: {},
-                            facets: {}
-                        };
-                    }
-
-                    // Apply pagination to aggregated results
-                    const from = context.from || 0;
-                    const size = context.size || 10;
-                    const paginatedHits = aggregatedHits.slice(from, from + size);
-
-                    console.log(`🔍 Aggregated results: ${totalDocs} total docs, ${paginatedHits.length} returned`);
-
-                    const processedResult: SearchResult = {
-                        success: true,
-                        hits: paginatedHits,
-                        total: totalDocs,
-                        from: from,
-                        size: size,
-                        aggregations: aggregatedAggregations,
-                        facets: aggregatedFacets
-                    };
-
-                    // If no aggregations were provided, generate automatic facets
-                    if (!context.aggregations && paginatedHits.length > 0) {
-                        processedResult.facets = this.generateAutomaticFacets(paginatedHits, indexName);
-                    }
-
-                    return processedResult;
-                } catch (error) {
-                    console.error('Error searching sharded index:', error);
-                    throw error;
-                }
-            } else {
-                // For non-sharded indices, use the first available worker
-                // The SharedMemoryStore should have all documents regardless of which worker added them
-                const worker = this.workers[0];
+            const searchPromises = this.workers.map((worker, workerIndex) => {
                 const taskId = ++this.taskCounter;
 
                 return new Promise<SearchResult>((resolve, reject) => {
                     const timeout = setTimeout(() => {
-                        reject(new Error('Search timeout'));
+                        reject(new Error(`Search timeout on worker ${workerIndex}`));
                     }, this.config.taskTimeout);
 
                     // Send search task to worker
@@ -731,42 +635,169 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
                             worker.worker.removeListener('message', handler);
 
                             const result = message.result;
-
-                            // Process results into expected format
-                            const processedResult: SearchResult = {
+                            resolve({
                                 success: result.success !== false,
-                                hits: result.hits || [],
+                                results: result.hits || [],
                                 total: result.total || 0,
                                 from: result.from || 0,
                                 size: result.size || 10,
                                 aggregations: result.aggregations || {},
                                 facets: result.facets || {},
                                 error: result.error
-                            };
-
-                            // If no aggregations were provided, generate automatic facets
-                            if (!context.aggregations && result.hits && result.hits.length > 0) {
-                                processedResult.facets = this.generateAutomaticFacets(result.hits, indexName);
-                            }
-
-                            resolve(processedResult);
+                            });
                         } else if (message.type === 'TASK_ERROR' && message.taskId === taskId) {
                             clearTimeout(timeout);
                             worker.worker.removeListener('message', handler);
-                            reject(new Error(message.error || 'Search failed'));
+                            reject(new Error(message.error || `Search failed on worker ${workerIndex}`));
                         }
                     };
 
                     worker.worker.on('message', handler);
                 });
+            });
+
+            try {
+                // Wait for all workers to complete
+                const results = await Promise.all(searchPromises);
+
+                // Aggregate results from all workers
+                const aggregatedHits: any[] = [];
+                let totalDocs = 0;
+                const aggregatedAggregations: any = {};
+                const aggregatedFacets: any = {};
+                let hasError = false;
+                let errorMessage = '';
+
+                for (const result of results) {
+                    console.log(`🔍 Worker result:`, result);
+                    if (result.success) {
+                        // Handle successful results
+                        if (result.results) {
+                            aggregatedHits.push(...result.results);
+                            totalDocs += result.total || 0;
+                        } else if (result.hits) {
+                            // Handle direct hits format
+                            aggregatedHits.push(...result.hits);
+                            totalDocs += result.total || 0;
+                        }
+
+                        // Merge aggregations and facets (simplified)
+                        Object.assign(aggregatedAggregations, result.aggregations || {});
+                        Object.assign(aggregatedFacets, result.facets || {});
+                    } else if (!result.success && result.error) {
+                        console.log(`🔍 Worker returned error:`, result.error);
+                        hasError = true;
+                        errorMessage = result.error;
+                    }
+                }
+
+                // If any worker returned an error, return the error
+                if (hasError) {
+                    return {
+                        success: false,
+                        error: errorMessage,
+                        hits: [],
+                        total: 0,
+                        from: 0,
+                        size: 0,
+                        aggregations: {},
+                        facets: {}
+                    };
+                }
+
+                // Apply pagination to aggregated results
+                const from = context.from || 0;
+                const size = context.size || 10;
+                const paginatedHits = aggregatedHits.slice(from, from + size);
+
+                console.log(`🔍 Aggregated results: ${totalDocs} total docs, ${paginatedHits.length} returned`);
+
+                const processedResult: SearchResult = {
+                    success: true,
+                    hits: paginatedHits,
+                    total: totalDocs,
+                    from: from,
+                    size: size,
+                    aggregations: aggregatedAggregations,
+                    facets: aggregatedFacets
+                };
+
+                // If no aggregations were provided, generate automatic facets
+                if (!context.aggregations && paginatedHits.length > 0) {
+                    processedResult.facets = this.generateAutomaticFacets(paginatedHits, indexName);
+                }
+
+                return processedResult;
+            } catch (error) {
+                console.error('Error searching sharded index:', error);
+                throw error;
             }
+        } else {
+            // For non-sharded indices, use the first available worker
+            // The SharedMemoryStore should have all documents regardless of which worker added them
+            const worker = this.workers[0];
+            const taskId = ++this.taskCounter;
 
-        } catch (error) {
-            console.error('Search error:', error);
-            return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+            return new Promise<SearchResult>((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error('Search timeout'));
+                }, this.config.taskTimeout);
+
+                // Send search task to worker
+                worker.worker.postMessage({
+                    type: 'EXECUTE_TASK',
+                    taskId,
+                    operation: {
+                        type: 'SEARCH',
+                        indexName,
+                        data: {
+                            query,
+                            context
+                        }
+                    }
+                });
+
+                // Handle response
+                const handler = (message: WorkerMessage) => {
+                    if (message.type === 'TASK_COMPLETE' && message.taskId === taskId) {
+                        clearTimeout(timeout);
+                        worker.worker.removeListener('message', handler);
+
+                        const result = message.result;
+
+                        // Process results into expected format
+                        const processedResult: SearchResult = {
+                            success: result.success !== false,
+                            hits: result.hits || [],
+                            total: result.total || 0,
+                            from: result.from || 0,
+                            size: result.size || 10,
+                            aggregations: result.aggregations || {},
+                            facets: result.facets || {},
+                            error: result.error
+                        };
+
+                        // If no aggregations were provided, generate automatic facets
+                        if (!context.aggregations && result.hits && result.hits.length > 0) {
+                            processedResult.facets = this.generateAutomaticFacets(result.hits, indexName);
+                        }
+
+                        resolve(processedResult);
+                    } else if (message.type === 'TASK_ERROR' && message.taskId === taskId) {
+                        clearTimeout(timeout);
+                        worker.worker.removeListener('message', handler);
+                        reject(new Error(message.error || 'Search failed'));
+                    }
+                };
+
+                worker.worker.on('message', handler);
+            });
         }
-    }
 
+    } catch(error) {
+        console.error('Search error:', error);
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
 
     private calculateAggregations(aggregationsConfig: AggregationConfiguration, documents: any[], indexName: string): Aggregations {
         const aggregations: Aggregations = {};
@@ -774,7 +805,13 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
         // Debug: Log the documents being used for aggregation calculation
         console.log(`🔍 calculateAggregations called with ${documents.length} documents for index '${indexName}'`);
         if (documents.length > 0) {
-            console.log('First few documents:', documents.slice(0, 3).map(d => ({ id: d.id, species: d.species, location: d.location })));
+            console.log('First few documents:', documents.slice(0, 3).map(d => ({
+                id: d.id,
+                genres: d.genres,
+                type: d.type,
+                status: d.status,
+                name: d.name
+            })));
         }
 
         // Calculate real aggregations based on the search results
@@ -2026,4 +2063,4 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
             }
         }, delay);
     }
-} 
+}

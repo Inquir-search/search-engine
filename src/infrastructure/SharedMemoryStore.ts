@@ -60,6 +60,8 @@ export interface SearchOptions {
     from?: number;
     size?: number;
     indexName?: string;
+    aggregations?: Record<string, any>;
+    aggs?: Record<string, any>;
 }
 
 export interface SearchResult {
@@ -68,6 +70,8 @@ export interface SearchResult {
     from: number;
     size: number;
     allMatches?: any[];
+    aggregations?: Record<string, any>;
+    facets?: Record<string, any>;
 }
 
 export interface DocumentAddResult {
@@ -161,13 +165,30 @@ export default class SharedMemoryStore {
                 const size = options.size || 10;
                 const paginatedHits = filteredHits.slice(from, from + size);
 
+                // Calculate aggregations and facets based on filtered results only
+                let filteredAggregations = {};
+                let filteredFacets = {};
+
+                if (options.aggregations || options.aggs) {
+                    filteredAggregations = this.calculateAggregationsForIndex(
+                        options.aggregations || options.aggs,
+                        filteredHits,
+                        indexName
+                    );
+                }
+
+                // Calculate facets based on filtered results
+                if (result.facets) {
+                    filteredFacets = this.calculateFacetsForIndex(result.facets, filteredHits, indexName);
+                }
+
                 return {
                     hits: paginatedHits,
                     total: filteredHits.length, // Total count of filtered results
                     from: from,
                     size: size,
-                    aggregations: result.aggregations || {},
-                    facets: result.facets || {}
+                    aggregations: filteredAggregations,
+                    facets: filteredFacets
                 };
             }
 
@@ -306,5 +327,92 @@ export default class SharedMemoryStore {
             docLengths.set(id, text);
         }
         return docLengths;
+    }
+
+    /**
+     * Calculate aggregations for a specific index based on filtered results
+     */
+    private calculateAggregationsForIndex(aggregationsConfig: any, filteredHits: any[], indexName: string): any {
+        const aggregations: any = {};
+
+        for (const [aggName, aggConfig] of Object.entries(aggregationsConfig)) {
+            if (aggConfig && typeof aggConfig === 'object' && 'terms' in aggConfig && aggConfig.terms) {
+                const termsConfig = aggConfig.terms as any;
+                const field = termsConfig.field;
+                const size = termsConfig.size || 10;
+
+                // Count field values across filtered documents only
+                const fieldCounts: Map<string, number> = new Map();
+
+                for (const doc of filteredHits) {
+                    let fieldValues: any[] = [];
+
+                    if (doc[field]) {
+                        if (Array.isArray(doc[field])) {
+                            fieldValues = doc[field];
+                        } else {
+                            fieldValues = [doc[field]];
+                        }
+                    }
+
+                    for (const value of fieldValues) {
+                        if (value && value.toString().trim()) {
+                            const key = value.toString();
+                            fieldCounts.set(key, (fieldCounts.get(key) || 0) + 1);
+                        }
+                    }
+                }
+
+                // Sort by count descending and take top N
+                const buckets = Array.from(fieldCounts.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, size)
+                    .map(([key, count]) => ({
+                        key: key,
+                        doc_count: count
+                    }));
+
+                aggregations[aggName] = { buckets };
+            }
+        }
+
+        return aggregations;
+    }
+
+    /**
+     * Calculate facets for a specific index based on filtered results
+     */
+    private calculateFacetsForIndex(originalFacets: any, filteredHits: any[], indexName: string): any {
+        const facets: any = {};
+
+        // Recalculate facets based on filtered results
+        for (const [field, counts] of Object.entries(originalFacets)) {
+            const fieldCounts: Record<string, number> = {};
+
+            for (const doc of filteredHits) {
+                let fieldValues: any[] = [];
+
+                if (doc[field]) {
+                    if (Array.isArray(doc[field])) {
+                        fieldValues = doc[field];
+                    } else {
+                        fieldValues = [doc[field]];
+                    }
+                }
+
+                for (const value of fieldValues) {
+                    if (value && value.toString().trim()) {
+                        const key = value.toString();
+                        fieldCounts[key] = (fieldCounts[key] || 0) + 1;
+                    }
+                }
+            }
+
+            if (Object.keys(fieldCounts).length > 0) {
+                facets[field] = fieldCounts;
+            }
+        }
+
+        return facets;
     }
 }

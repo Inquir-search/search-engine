@@ -23,9 +23,10 @@ export class AddDocumentUseCase implements IUseCase<AddDocumentCommand, AddDocum
             docToSave = command.document as Document;
         } else {
             // Wrap plain JS object into domain Document entity
-            const id = new DocumentId(command.document.id || command.document.documentId || command.document.document_id || '');
+            const docData = command.document as any;
+            const id = new DocumentId(docData.id || docData.documentId || docData.document_id || '');
             const idxName = new IndexName(command.indexName || indexName);
-            docToSave = new Document(id, { ...command.document }, idxName);
+            docToSave = new Document(id, { ...docData }, idxName);
         }
 
         // Persist via repository (DDD boundary)
@@ -40,7 +41,7 @@ export class AddDocumentUseCase implements IUseCase<AddDocumentCommand, AddDocum
 
         return {
             success: true,
-            documentId: docToSave.getId ? docToSave.getId().value : (command.document.id || ''),
+            documentId: docToSave.getId ? docToSave.getId().value : ((command.document as any).id || ''),
             indexName
         };
     }

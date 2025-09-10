@@ -230,8 +230,6 @@ export default class AdvancedSharedMemoryStore {
         this.queryEngine = new SharedMemoryQueryEngine({
             sharedMemoryStore: this,
             tokenizer: this.tokenizer,
-            synonymEngine: options.synonymEngine,
-            mappingsManager: options.mappingsManager,
             maxCacheSize: options.queryCacheSize ?? sharedMemoryConfig.advanced.queryCacheSize
         });
 
@@ -272,7 +270,7 @@ export default class AdvancedSharedMemoryStore {
         // Initialize document metadata cache
         this.docMetadataCache.fill(0);
 
-        }
+    }
 
     /**
      * Acquire read lock (allows multiple readers)

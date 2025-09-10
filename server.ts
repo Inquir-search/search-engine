@@ -1,11 +1,11 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import os from 'os';
-import SharedMemoryWorkerPool from './src/infrastructure/SharedMemoryWorkerPool.js';
-import WorkerMonitor from './src/infrastructure/WorkerMonitor.js';
-import StreamingPersistence from './src/infrastructure/StreamingPersistence.js';
-import PerformanceOptimizations, { IMMEDIATE_PERFORMANCE_CONFIG } from './src/infrastructure/PerformanceOptimizations.js';
-import { getConfigManager } from './src/infrastructure/ConfigManager.js';
+import SharedMemoryWorkerPool from './src/infrastructure/SharedMemoryWorkerPool.ts';
+import WorkerMonitor from './src/infrastructure/WorkerMonitor.ts';
+import StreamingPersistence from './src/infrastructure/StreamingPersistence.ts';
+import PerformanceOptimizations, { IMMEDIATE_PERFORMANCE_CONFIG } from './src/infrastructure/PerformanceOptimizations.ts';
+import { getConfigManager } from './src/infrastructure/ConfigManager.ts';
 
 const app = express();
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;

@@ -1,6 +1,7 @@
 import { DocumentStore, Document, DocumentFilter, StorageStats, StorageOptions, BulkOperationResult, DocumentStoreSnapshot } from './DocumentStore.js';
 import fs from 'fs';
 import path from 'path';
+import { getErrorMessage } from '../../lib/utils/ErrorUtils';
 
 interface FileSystemOptions extends StorageOptions {
     baseDir?: string;
@@ -259,7 +260,7 @@ export class FileSystemDocumentStore extends DocumentStore {
                 result.failed++;
                 result.errors.push({
                     id: document.id,
-                    error: error.message
+                    error: getErrorMessage(error)
                 });
             }
         }
@@ -311,7 +312,7 @@ export class FileSystemDocumentStore extends DocumentStore {
                 result.failed++;
                 result.errors.push({
                     id,
-                    error: error.message
+                    error: getErrorMessage(error)
                 });
             }
         }
@@ -533,7 +534,6 @@ export class FileSystemDocumentStore extends DocumentStore {
     async compact(): Promise<boolean> {
         // For file system, compaction could involve defragmentation or cleanup
         // This is a placeholder implementation
-        ');
         return true;
     }
 

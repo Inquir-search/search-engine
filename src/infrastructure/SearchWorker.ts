@@ -317,7 +317,7 @@ export class SearchOperationHandler {
             return {
                 indexName: name,
                 totalDocs: engine.totalDocs,
-                numTerms: engine.invertedIndex.getAllTokens().length,
+                numTerms: (engine as any).queryEngine?.invertedIndex?.getAllTokens?.()?.length || 0,
                 facetFields: engine.facetFields
             };
         });
@@ -393,7 +393,7 @@ export default class SearchWorker {
         this.workerId = workerId;
         this.workerType = workerType;
 
-        this.worker = new Worker(new URL(import.meta.url), {
+        this.worker = new Worker(require.resolve('./SearchWorker.js'), {
             workerData: { workerId, workerType }
         });
 

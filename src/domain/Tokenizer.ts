@@ -317,7 +317,7 @@ export default class Tokenizer implements ITokenizer {
                 }
             } catch (error) {
                 // If URL parsing fails, continue with basic tokenization
-                }
+            }
         }
 
         return tokens.filter(token => !this.stopwordsSet.has(token));
@@ -479,9 +479,9 @@ export default class Tokenizer implements ITokenizer {
     setStemming(enabled: boolean, options: StemmingOptions = {}): void {
         this.stemmingEnabled = enabled;
         if (enabled && !this.stemmer) {
-            this.stemmer = new Stemmer({ ...this.stemmingOptions, ...options });
+            this.stemmer = new Stemmer({ ...this.stemmingOptions, ...options } as any);
         } else if (enabled && this.stemmer) {
-            this.stemmer.configure(options);
+            this.stemmer.configure(options as any);
         }
     }
 

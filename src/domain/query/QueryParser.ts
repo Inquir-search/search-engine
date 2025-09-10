@@ -103,7 +103,7 @@ export class QueryParser {
         if (raw.range) {
             // Handle both internal format and OpenSearch format
             if (raw.range.field) {
-                return new RangeQuery(raw.range.field, raw.range);
+                return new RangeQuery(raw.range.field, raw.range.gte, raw.range.lte, raw.range.gt, raw.range.lt);
             } else {
                 // OpenSearch format: { range: { fieldName: { gte: 10, lte: 20 } } }
                 const fieldNames = Object.keys(raw.range);
@@ -181,7 +181,9 @@ export class QueryParser {
 
         if (raw.geo_distance) {
             const location = raw.geo_distance.location || raw.geo_distance.center;
-            return new GeoDistanceQuery(raw.geo_distance.field, location, raw.geo_distance.distance);
+            if (location && typeof location === 'object' && 'lat' in location && 'lon' in location) {
+                return new GeoDistanceQuery(raw.geo_distance.field, location, String(raw.geo_distance.distance));
+            }
         }
 
         if (raw.match_phrase || raw.phrase) {

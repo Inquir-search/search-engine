@@ -391,8 +391,12 @@ class SharedMemoryWorkerService {
                     indexName
                 });
 
+                // Also check if we have in-memory docs for this index (fallback mechanism)
+                const inMemoryMap: Map<string, any[]> = (this as any)['__inMemoryDocs'] || new Map();
+                const inMemoryDocs = inMemoryMap.get(indexName) || [];
+
                 // If no documents exist for this index at all, return error
-                if (indexCheck.total === 0) {
+                if (indexCheck.total === 0 && inMemoryDocs.length === 0) {
                     console.log(`🔍 Worker ${this.workerId}: Index '${indexName}' not found, returning error`);
                     return {
                         success: false,
@@ -416,12 +420,12 @@ class SharedMemoryWorkerService {
                     hitsCount: paginatedHits.length
                 });
 
-                // Calculate aggregations if requested
+                // Calculate aggregations if requested - use filtered results
                 let calculatedAggregations = {};
                 if (context.aggregations || context.aggs) {
                     calculatedAggregations = this.calculateAggregations(
-                        context.aggregations || context.aggs, 
-                        results.hits || [], 
+                        context.aggregations || context.aggs,
+                        results.hits || [], // results.hits are already filtered by indexName
                         indexName
                     );
                 }
@@ -457,9 +461,10 @@ class SharedMemoryWorkerService {
 
         // Calculate real aggregations based on the search results
         for (const [aggName, aggConfig] of Object.entries(aggregationsConfig)) {
-            if (aggConfig.terms) {
-                const field = aggConfig.terms.field;
-                const size = aggConfig.terms.size || 10;
+            if (aggConfig && typeof aggConfig === 'object' && 'terms' in aggConfig && aggConfig.terms) {
+                const termsConfig = aggConfig.terms as any;
+                const field = termsConfig.field;
+                const size = termsConfig.size || 10;
 
                 // Count field values across all documents
                 const fieldCounts: Map<string, number> = new Map();
@@ -494,10 +499,11 @@ class SharedMemoryWorkerService {
 
                 aggregations[aggName] = { buckets };
 
-            } else if (aggConfig.range) {
+            } else if (aggConfig && typeof aggConfig === 'object' && 'range' in aggConfig && aggConfig.range) {
                 // Handle range aggregations if needed
-                const field = aggConfig.range.field;
-                const ranges = aggConfig.range.ranges || [];
+                const rangeConfig = aggConfig.range as any;
+                const field = rangeConfig.field;
+                const ranges = rangeConfig.ranges || [];
 
                 const buckets = ranges.map((range: any) => {
                     let count = 0;
@@ -779,14 +785,14 @@ class SharedMemoryWorkerService {
      */
     private async handleSyncOperations(data: any): Promise<any> {
         console.log(`🔄 Worker ${this.workerId}: Handling sync operations`);
-        
+
         try {
             // For now, return empty operations list
             // In a full CRDT implementation, this would:
             // 1. Compare vector clocks
             // 2. Return operations that the worker has that the main pool doesn't
             // 3. Apply operations from the main pool that the worker doesn't have
-            
+
             return {
                 success: true,
                 operations: [],

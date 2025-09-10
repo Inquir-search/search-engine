@@ -133,6 +133,11 @@ export interface InitEngineOperation extends BaseOperation {
     };
 }
 
+export interface SyncOperationsOperation {
+    type: 'SYNC_OPERATIONS';
+    data: any;
+}
+
 export type WorkerOperation =
     | AddDocumentsOperation
     | DeleteDocumentOperation
@@ -142,7 +147,8 @@ export type WorkerOperation =
     | BatchProcessOperation
     | FlushOperation
     | InitFromRestoredOperation
-    | InitEngineOperation;
+    | InitEngineOperation
+    | SyncOperationsOperation;
 
 // Batch processing types
 export interface BatchItem {
@@ -156,6 +162,7 @@ export interface BatchItem {
 
 // Result types
 export interface AddDocumentsResult {
+    success: boolean;
     addedCount: number;
     totalDocs: number;
     results: Array<{ id: string; docId: string }>;
@@ -273,6 +280,7 @@ export interface SearchContext {
     from?: number;
     size?: number;
     aggregations?: Record<string, any>;
+    aggs?: Record<string, any>;
 }
 
 export interface AggregationConfiguration {
@@ -304,6 +312,7 @@ export interface Facets {
 export interface SearchResult {
     success: boolean;
     results?: any[];
+    hits?: any[];
     total?: number;
     from?: number;
     size?: number;
@@ -312,7 +321,7 @@ export interface SearchResult {
     error?: string;
 }
 
-export interface AddDocumentsResult {
+export interface AddDocumentsResultExtended {
     success: boolean;
     addedCount?: number;
     duplicateCount?: number;

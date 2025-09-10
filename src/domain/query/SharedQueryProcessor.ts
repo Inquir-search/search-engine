@@ -39,21 +39,23 @@ export class SharedQueryProcessor {
 
         // Process should clauses (optional, but at least one must match if minimum_should_match is set)
         if (boolQuery.should && Array.isArray(boolQuery.should) && boolQuery.should.length > 0) {
-            const shouldResults = [];
+            const shouldResults: any[] = [];
             for (const shouldClause of boolQuery.should) {
                 const clauseResults = this.processQueryClause(docs, shouldClause);
-                shouldResults.push(...clauseResults);
+                if (Array.isArray(clauseResults)) {
+                    shouldResults.push(...(clauseResults as any[]));
+                }
             }
-            
+
             // Remove duplicates from should results
-            const uniqueShouldResults = shouldResults.filter((doc, index, self) => 
-                self.findIndex(d => d.id === doc.id) === index
+            const uniqueShouldResults = shouldResults.filter((doc: any, index: number, self: any[]) =>
+                self.findIndex((d: any) => d.id === doc.id) === index
             );
 
             if (boolQuery.minimum_should_match && boolQuery.minimum_should_match > 0) {
                 // If minimum_should_match is set, intersect results with should results
-                results = results.filter(doc => 
-                    uniqueShouldResults.some(shouldDoc => shouldDoc.id === doc.id)
+                results = results.filter((doc: any) =>
+                    uniqueShouldResults.some((shouldDoc: any) => shouldDoc.id === doc.id)
                 );
             } else if (!boolQuery.must && (!boolQuery.filter || boolQuery.filter.length === 0)) {
                 // If only should clauses, use should results
@@ -65,7 +67,7 @@ export class SharedQueryProcessor {
         if (boolQuery.must_not && Array.isArray(boolQuery.must_not)) {
             for (const mustNotClause of boolQuery.must_not) {
                 const excludeResults = this.processQueryClause(docs, mustNotClause);
-                results = results.filter(doc => 
+                results = results.filter(doc =>
                     !excludeResults.some(excludeDoc => excludeDoc.id === doc.id)
                 );
             }
@@ -81,7 +83,7 @@ export class SharedQueryProcessor {
         if (clause.match_all) {
             return docs;
         }
-        
+
         if (clause.match && clause.match.field && clause.match.value !== undefined) {
             const field = clause.match.field;
             const value = clause.match.value.toString().toLowerCase();

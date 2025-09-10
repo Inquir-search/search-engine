@@ -2,6 +2,8 @@ import { cpus } from 'os';
 import SearchWorker from './SearchWorker';
 import EventEmitter from 'events';
 import { getConfigManager } from './ConfigManager';
+import { getErrorMessage, createErrorResult, logError } from '../lib/utils/ErrorUtils';
+import { logOperationStart, logOperationComplete, logOperationFailed, logWorkerTask } from '../lib/utils/LoggingUtils';
 
 // Domain value objects and types
 export interface WorkerPoolConfiguration {
@@ -155,10 +157,14 @@ export default class WorkerPool extends EventEmitter {
             historySize: options.historySize ?? workerPoolConfig.historySize,
             healthCheckInterval: options.healthCheckInterval ?? workerPoolConfig.healthCheckInterval,
             performanceInterval: options.performanceInterval ?? workerPoolConfig.performanceInterval,
-            alertThresholds: options.alertThresholds ?? workerPoolConfig.alertThresholds
+            alertThresholds: options.alertThresholds ?? {
+                maxQueueSize: workerPoolConfig.alertThresholds?.memoryUsage ? Math.round(workerPoolConfig.alertThresholds.memoryUsage * 1000) : 1000,
+                maxResponseTime: workerPoolConfig.alertThresholds?.avgQueryTime || 5000,
+                maxErrorRate: workerPoolConfig.alertThresholds?.errorRate || 0.1
+            }
         };
 
-        `);
+        console.log(`WorkerPool initialized with ${this.config.totalWorkers} total workers`);
 
         // Initialize statistics
         this.stats = {
@@ -172,7 +178,7 @@ export default class WorkerPool extends EventEmitter {
             queuedWrites: 0
         };
 
-        }
+    }
 
     async initialize(): Promise<WorkerPool> {
         // Calculate worker distribution
@@ -351,7 +357,7 @@ export default class WorkerPool extends EventEmitter {
             this.workerLoads.set(worker.workerId, this.workerLoads.get(worker.workerId)! + 1);
 
             // Execute operation
-            const result = await worker.executeOperation(task.operation);
+            const result = await worker.executeOperation(task.operation as any);
 
             // Calculate response time
             const responseTime = Date.now() - startTime;
@@ -377,18 +383,18 @@ export default class WorkerPool extends EventEmitter {
             task.resolve(result);
 
         } catch (error) {
-            console.error(`❌ Task execution error on worker ${worker.workerId}:`, error.message);
+            logError(`Task execution error on worker ${worker.workerId}`, error);
             this.stats.failedTasks++;
 
             // Emit failure event
             this.emit('taskFailed', {
                 taskId: task.id,
                 operationType: task.operation.type,
-                error: error.message,
+                error: getErrorMessage(error),
                 timestamp: Date.now()
             } as TaskFailedEvent);
 
-            task.reject(error);
+            task.reject(error instanceof Error ? error : new Error(getErrorMessage(error)));
         } finally {
             // Update worker load
             this.workerLoads.set(worker.workerId, Math.max(0, this.workerLoads.get(worker.workerId)! - 1));
@@ -477,7 +483,7 @@ export default class WorkerPool extends EventEmitter {
                         indexName,
                         data: { documents }
                     }).catch(error => {
-                        return { success: false, error: error.message };
+                        return createErrorResult(error, 'addDocuments');
                     });
                 })
             );
@@ -500,8 +506,8 @@ export default class WorkerPool extends EventEmitter {
                 };
             }
         } catch (error) {
-            console.error('Error broadcasting document addition:', error);
-            return { success: false, error: error.message };
+            logError('Error broadcasting document addition', error);
+            return createErrorResult(error, 'broadcastDocumentAddition');
         }
     }
 
@@ -515,7 +521,7 @@ export default class WorkerPool extends EventEmitter {
                         indexName,
                         data: { docId }
                     }).catch(error => {
-                        return { success: false, error: error.message };
+                        return createErrorResult(error, 'addDocuments');
                     });
                 })
             );
@@ -538,8 +544,8 @@ export default class WorkerPool extends EventEmitter {
                 };
             }
         } catch (error) {
-            console.error('Error broadcasting document deletion:', error);
-            return { success: false, error: error.message };
+            logError('Error broadcasting document deletion', error);
+            return createErrorResult(error, 'broadcastDocumentDeletion');
         }
     }
 
@@ -550,7 +556,7 @@ export default class WorkerPool extends EventEmitter {
         });
     }
 
-    async getStats(indexName: string): Promise<any> {
+    async getIndexStats(indexName: string): Promise<any> {
         return this.submitTask({
             type: 'GET_STATS',
             indexName
@@ -571,9 +577,10 @@ export default class WorkerPool extends EventEmitter {
                 this.allWorkers.map(worker => {
                     return worker.executeOperation({
                         type: 'INIT_ENGINE',
-                        data: config
-                    }).catch(error => {
-                        return { success: false, error: error.message };
+                        data: config,
+                        indexName: 'default'
+                    } as any).catch(error => {
+                        return createErrorResult(error, 'addDocuments');
                     });
                 })
             );
@@ -594,8 +601,8 @@ export default class WorkerPool extends EventEmitter {
                 };
             }
         } catch (error) {
-            console.error('Error initializing engine across workers:', error);
-            return { success: false, error: error.message };
+            logError('Error initializing engine across workers', error);
+            return createErrorResult(error, 'initializeEngine');
         }
     }
 
@@ -620,9 +627,11 @@ export default class WorkerPool extends EventEmitter {
             const workerResults = await Promise.all(
                 this.allWorkers.map(worker => {
                     return worker.executeOperation({
-                        type: 'LIST_INDICES'
-                    }).catch(error => {
-                        return { success: false, error: error.message };
+                        type: 'LIST_INDICES',
+                        indexName: 'default',
+                        data: {}
+                    } as any).catch(error => {
+                        return createErrorResult(error, 'addDocuments');
                     });
                 })
             );
@@ -647,8 +656,8 @@ export default class WorkerPool extends EventEmitter {
                 respondedWorkers: workerResults.filter(r => r.success).length
             };
         } catch (error) {
-            console.error('Error listing indices across workers:', error);
-            return { success: false, error: error.message };
+            logError('Error listing indices across workers', error);
+            return createErrorResult(error, 'listIndices');
         }
     }
 
@@ -663,15 +672,21 @@ export default class WorkerPool extends EventEmitter {
     }
 
     private logStats(): void {
-        }ms`);
-        ).map(([id, load]) => `${id}:${load}`).join(', ')}`);
+        console.log(`Pool stats: ${this.stats.totalTasks} tasks, ${this.allWorkers.length} active workers`);
+        console.log(`Worker loads: ${Array.from(this.workerLoads.entries()).map(([id, load]) => `${id}:${load}`).join(', ')}`);
     }
 
     getStats(): PoolStats {
         return {
             ...this.stats,
             config: this.config,
-            workers: this.allWorkers.map(w => w.getStats()),
+            workers: this.allWorkers.map(w => ({
+                id: w.workerId,
+                currentLoad: 0,
+                totalTasks: 0,
+                avgResponseTime: 0,
+                ...w.getStats()
+            })),
             queues: {
                 readQueue: this.readQueue.length,
                 writeQueue: this.writeQueue.length,
@@ -687,7 +702,7 @@ export default class WorkerPool extends EventEmitter {
 
         // Wait for pending tasks to complete (with timeout)
         const shutdownTimeout = setTimeout(() => {
-            }, 10000);
+        }, 10000);
 
         while (this.pendingTasks.size > 0) {
             await new Promise(resolve => setTimeout(resolve, 100));
@@ -698,5 +713,5 @@ export default class WorkerPool extends EventEmitter {
         // Terminate all workers
         await Promise.all(this.allWorkers.map(worker => worker.terminate()));
 
-        }
+    }
 }

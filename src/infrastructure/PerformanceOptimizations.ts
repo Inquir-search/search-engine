@@ -181,7 +181,11 @@ export class QueryOptimizationService {
      * Optimize search options for better performance
      */
     static optimizeSearchOptions(options: SearchOptionsInput): SearchOptionsOptimized {
-        const optimized: SearchOptionsOptimized = { ...options };
+        const optimized: SearchOptionsOptimized = {
+            size: options.size || 10,
+            from: options.from || 0,
+            ...options
+        };
 
         // Optimize result size
         if (!optimized.size || optimized.size > 100) {
@@ -214,7 +218,7 @@ export class DocumentOptimizationService {
      * Optimize document serialization for better performance
      */
     static optimizeDocument(doc: DocumentInput): OptimizedDocument {
-        if (!doc || typeof doc !== 'object') return doc;
+        if (!doc || typeof doc !== 'object') return doc as unknown as OptimizedDocument;
 
         const optimized: OptimizedDocument = {};
 

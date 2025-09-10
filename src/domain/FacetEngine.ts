@@ -82,7 +82,7 @@ export default class FacetEngine {
 
         // CRITICAL FIX: Prevent string iteration bug
         if (typeof facetFields === 'string') {
-            facetFields = facetFields.split(',').map(f => f.trim()).filter(f => f);
+            facetFields = (facetFields as string).split(',').map(f => f.trim()).filter(f => f) as string[];
         }
 
         this.facetFields = facetFields;
@@ -138,7 +138,7 @@ export default class FacetEngine {
     // Alias for backward compatibility
     getFacets(docs: DocumentLike[] | Set<string>): FacetResults {
         if (Array.isArray(docs)) {
-            const docIds = new Set(docs.map(doc => doc.id || doc));
+            const docIds = new Set(docs.map(doc => typeof doc === 'string' ? doc : doc.id));
             return this.calculate(docIds);
         }
         return this.calculate(docs as Set<string>);

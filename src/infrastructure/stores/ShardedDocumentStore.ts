@@ -2,6 +2,7 @@ import { DocumentStore, Document, DocumentFilter, StorageStats, StorageOptions, 
 import FileSystemDocumentStore from './FileSystemDocumentStore.js';
 import path from 'path';
 import fs from 'fs';
+import { getErrorMessage } from '../../lib/utils/ErrorUtils';
 
 interface ShardedOptions extends StorageOptions {
     baseDir?: string;
@@ -83,7 +84,7 @@ export class ShardedDocumentStore extends DocumentStore {
         await this.loadShardStats();
 
         this.isInitialized = true;
-        }
+    }
 
     async shutdown(): Promise<void> {
         if (!this.isInitialized) return;
@@ -95,7 +96,7 @@ export class ShardedDocumentStore extends DocumentStore {
 
         this.shards.clear();
         this.isInitialized = false;
-        }
+    }
 
     async isHealthy(): Promise<boolean> {
         if (!this.isInitialized) return false;
@@ -167,7 +168,7 @@ export class ShardedDocumentStore extends DocumentStore {
                     return document;
                 }
             } catch (error) {
-                }
+            }
         }
 
         this.updateStats('read');
@@ -194,7 +195,7 @@ export class ShardedDocumentStore extends DocumentStore {
                         }
                     }
                 } catch (error) {
-                    }
+                }
             }
 
             if (deleted) {
@@ -219,7 +220,7 @@ export class ShardedDocumentStore extends DocumentStore {
                     return true;
                 }
             } catch (error) {
-                }
+            }
         }
 
         return false;
@@ -259,7 +260,7 @@ export class ShardedDocumentStore extends DocumentStore {
                     for (const doc of shardDocuments) {
                         result.errors.push({
                             id: doc.id,
-                            error: `Shard ${shardId} failed: ${error.message}`
+                            error: `Shard ${shardId} failed: ${getErrorMessage(error)}`
                         });
                     }
                 }
@@ -315,7 +316,7 @@ export class ShardedDocumentStore extends DocumentStore {
                     success: false,
                     processed: 0,
                     failed: ids.length,
-                    errors: ids.map(id => ({ id, error: `Shard ${shardInfo.id} failed: ${error.message}` }))
+                    errors: ids.map(id => ({ id, error: `Shard ${shardInfo.id} failed: ${getErrorMessage(error)}` }))
                 };
             }
         });
@@ -410,7 +411,7 @@ export class ShardedDocumentStore extends DocumentStore {
 
         if (success) {
             this.stats.totalIndexes++;
-            }
+        }
 
         return success;
     }
@@ -429,7 +430,7 @@ export class ShardedDocumentStore extends DocumentStore {
         if (success) {
             this.stats.totalIndexes--;
             await this.updateShardStats();
-            }
+        }
 
         return success;
     }
@@ -466,7 +467,7 @@ export class ShardedDocumentStore extends DocumentStore {
         for (const stats of shardStats) {
             aggregatedStats.totalDocuments += stats.totalDocuments;
             aggregatedStats.memoryUsage += stats.memoryUsage;
-            aggregatedStats.diskUsage += stats.diskUsage || 0;
+            aggregatedStats.diskUsage = (aggregatedStats.diskUsage || 0) + (stats.diskUsage || 0);
             aggregatedStats.operations.reads += stats.operations.reads;
             aggregatedStats.operations.writes += stats.operations.writes;
             aggregatedStats.operations.deletes += stats.operations.deletes;
@@ -515,7 +516,7 @@ export class ShardedDocumentStore extends DocumentStore {
                     JSON.stringify(metadata, null, 2)
                 );
 
-                }
+            }
 
             return success;
         } catch (error) {
@@ -535,7 +536,7 @@ export class ShardedDocumentStore extends DocumentStore {
 
             // Validate backup compatibility
             if (metadata.numShards !== this.numShards) {
-                }
+            }
 
             // Restore each shard
             const promises = Array.from(this.shards.values()).map(async (shardInfo) => {
@@ -551,7 +552,7 @@ export class ShardedDocumentStore extends DocumentStore {
 
             if (success) {
                 await this.loadShardStats();
-                }
+            }
 
             return success;
         } catch (error) {
@@ -622,7 +623,7 @@ export class ShardedDocumentStore extends DocumentStore {
         const success = results.every(r => r);
 
         if (success) {
-            }
+        }
 
         return success;
     }
@@ -637,11 +638,11 @@ export class ShardedDocumentStore extends DocumentStore {
 
         if (success) {
             if (indexName) {
-                } else {
+            } else {
                 this.stats.totalDocuments = 0;
                 this.stats.totalIndexes = 0;
                 await this.updateShardStats();
-                }
+            }
         }
 
         return success;
@@ -671,14 +672,14 @@ export class ShardedDocumentStore extends DocumentStore {
 
                 if (Math.abs(deviation) > this.rebalanceThreshold) {
                     // This shard needs rebalancing
-                    .toFixed(1)}% deviation)`);
+                    console.log(`Shard ${shardId} has ${(deviation * 100).toFixed(1)}% deviation`);
                 }
             }
 
             // Execute move operations
             for (const operation of moveOperations) {
                 // Implementation would move documents between shards
-                }
+            }
 
             return true;
         } catch (error) {
@@ -796,7 +797,7 @@ export class ShardedDocumentStore extends DocumentStore {
         const maxDeviation = Math.max(...shardSizes.map(size => Math.abs((size - averageSize) / averageSize)));
 
         if (maxDeviation > this.rebalanceThreshold) {
-            .toFixed(1)}%), triggering rebalance...`);
+            console.log(`Max deviation ${(maxDeviation * 100).toFixed(1)}% exceeds threshold, triggering rebalance...`);
             await this.rebalance();
         }
     }

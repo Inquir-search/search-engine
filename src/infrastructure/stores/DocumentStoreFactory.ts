@@ -342,15 +342,15 @@ export class DocumentStoreFactory {
         const parts = [config.type];
 
         if (config.baseDir) {
-            parts.push(config.baseDir.replace(/[/\\]/g, '_'));
+            parts.push(config.baseDir.replace(/[/\\]/g, '_') as StoreType);
         }
 
         if (config.redis?.host) {
-            parts.push(`${config.redis.host}:${config.redis.port || 6379}`);
+            parts.push(`${config.redis.host}:${config.redis.port || 6379}` as StoreType);
         }
 
         if (config.numShards) {
-            parts.push(`shards-${config.numShards}`);
+            parts.push(`shards-${config.numShards}` as StoreType);
         }
 
         return parts.join('-');
