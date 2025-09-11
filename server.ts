@@ -7,6 +7,13 @@ import StreamingPersistence from './src/infrastructure/StreamingPersistence.ts';
 import PerformanceOptimizations, { IMMEDIATE_PERFORMANCE_CONFIG } from './src/infrastructure/PerformanceOptimizations.ts';
 import { getConfigManager } from './src/infrastructure/ConfigManager.ts';
 
+// Reduce noisy logging when running under the test runner to prevent the
+// spawned process's stdout buffer from filling up (which previously caused the
+// server to terminate prematurely and tests to fail with socket errors).
+if (process.env.VITEST) {
+    console.log = () => {};
+}
+
 const app = express();
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 
