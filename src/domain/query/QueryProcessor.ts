@@ -271,7 +271,15 @@ export class QueryProcessor {
                 }
             }
 
-            // Process should clauses (optional, but at least one must match if minimum_should_match is set)
+            // Process should clauses (optional).  In Elasticsearch semantics a
+            // bool query with `must` clauses should not exclude documents that
+            // fail to match any `should` clause – the `should` clauses only
+            // influence scoring.  Our earlier implementation intersected the
+            // `should` results with the `must` results which erroneously
+            // discarded valid matches.  Here we collect the `should` matches but
+            // only use them when there are no `must`/`filter` results.  When
+            // `must` results exist we simply retain them unchanged so all
+            // documents satisfying the mandatory clauses are returned.
             if (boolQuery.should && Array.isArray(boolQuery.should) && boolQuery.should.length > 0) {
                 const shouldResults = new Set<string>();
                 for (const shouldClause of boolQuery.should) {
@@ -281,12 +289,14 @@ export class QueryProcessor {
                     }
                 }
 
-                // If we have must/filter results, intersect with should results
-                if (results.size > 0) {
-                    results = new Set([...results].filter(docId => shouldResults.has(docId)));
-                } else {
+                if (results.size === 0) {
+                    // No mandatory results – return all docs that matched any
+                    // should clause.
                     results = shouldResults;
                 }
+                // If results already contain mandatory matches we keep them as
+                // is.  The scoring layer will account for `should` matches
+                // separately.
             }
 
             // Process must_not clauses (exclusion)

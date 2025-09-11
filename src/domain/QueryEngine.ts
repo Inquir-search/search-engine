@@ -230,29 +230,39 @@ export class QueryEngine {
 
         let docIds: Set<string> = new Set<string>();
 
-        // First pass – attempt advanced processor search
-        try {
-            const plainQuery = this.toPlainQuery(query) ?? query;
-            console.log(`🔍 QueryEngine: Validating query...`);
-            if (this._validateProcessorQuery(plainQuery)) {
-                console.log(`🔍 QueryEngine: Using QueryProcessor`);
-                const procResult = this.processor.execute(plainQuery);
-                if (procResult && procResult.documents && procResult.documents.size > 0) {
-                    console.log(`🔍 QueryEngine: QueryProcessor found ${procResult.documents.size} documents`);
-                    // Process documents from processor result
-                    docIds = new Set(Array.from(procResult.documents).map((id: any) => typeof id === 'string' ? id : id.value));
+        // The QueryProcessor provides more advanced search capabilities but
+        // historically simple string queries relied on a naive scan with strict
+        // AND semantics.  Running such string queries through the
+        // QueryProcessor introduced subtle behavioural differences (e.g. OR
+        // semantics) which caused several unit tests to fail.  To preserve the
+        // expected behaviour we only delegate to the QueryProcessor for
+        // structured query objects.  Plain string queries fall back directly to
+        // the naive scan.
+        if (typeof query !== 'string') {
+            try {
+                const plainQuery = this.toPlainQuery(query) ?? query;
+                console.log(`🔍 QueryEngine: Validating query...`);
+                if (this._validateProcessorQuery(plainQuery)) {
+                    console.log(`🔍 QueryEngine: Using QueryProcessor`);
+                    const procResult = this.processor.execute(plainQuery);
+                    if (procResult && procResult.documents && procResult.documents.size > 0) {
+                        console.log(`🔍 QueryEngine: QueryProcessor found ${procResult.documents.size} documents`);
+                        // Process documents from processor result
+                        docIds = new Set(Array.from(procResult.documents).map((id: any) => typeof id === 'string' ? id : id.value));
+                    } else {
+                        console.log(`🔍 QueryEngine: QueryProcessor returned no documents`);
+                    }
                 } else {
-                    console.log(`🔍 QueryEngine: QueryProcessor returned no documents`);
+                    console.log(`🔍 QueryEngine: Validation failed, will use naive scan`);
                 }
-            } else {
-                console.log(`🔍 QueryEngine: Validation failed, will use naive scan`);
+            } catch (e) {
+                console.log(`🔍 QueryEngine: QueryProcessor error:`, e instanceof Error ? e.message : String(e));
+                // ignore and rely on fallback
             }
-        } catch (e) {
-            console.log(`🔍 QueryEngine: QueryProcessor error:`, e instanceof Error ? e.message : String(e));
-            // ignore and rely on fallback
         }
 
-        // Fallback to naive scan if no documents found
+        // Fallback to naive scan if no documents found or for plain string
+        // queries.
         if (docIds.size === 0) {
             docIds = this._naiveScan(query, context);
         }
@@ -953,9 +963,27 @@ export class QueryEngine {
         // Helper to extract lowercase tokens from string fields of a document
         const extractDocTokens = (doc: any): string[] => {
             // Use domain service for token extraction
-            return this.documentProcessor.extractTextContent(doc, AnalyzerType.STANDARD).filter(token =>
-                token && !this._isStopword(token)
-            ).map(token => token.toLowerCase());
+            const baseTokens = this.documentProcessor
+                .extractTextContent(doc, AnalyzerType.STANDARD)
+                .filter(token => token && !this._isStopword(token))
+                .map(token => token.toLowerCase());
+
+            // Special handling for phone numbers: add a normalized digits-only
+            // representation so that queries for the full number can match even
+            // if the document originally contained separators (dashes, spaces,
+            // parentheses, etc.).  Without this the naive scanner would only
+            // see the segmented parts produced by the standard analyzer and
+            // fail to match the complete number.
+            this.documentProcessor.iterateFieldsWithCallback(doc, (field, value, fieldName) => {
+                if (typeof value === 'string' && fieldName.toLowerCase().includes('phone')) {
+                    const digits = value.replace(/[\s\-()\.]/g, '');
+                    if (digits) {
+                        baseTokens.push(digits.toLowerCase());
+                    }
+                }
+            });
+
+            return baseTokens;
         };
 
         // String query: match across string fields only

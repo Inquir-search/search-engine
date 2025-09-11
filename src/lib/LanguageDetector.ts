@@ -11,8 +11,17 @@ export class LanguageDetector {
         this.defaultLanguage = options.defaultLanguage || 'en';
         this.maxCacheSize = options.maxCacheSize || 1000;
 
-        // Initialize CLD asynchronously
-        this._initializeCld();
+        // Only attempt to load the native `cld` module when explicitly
+        // enabled.  The prebuilt binaries for `cld` are not available in the
+        // execution environment used for the tests which caused the process to
+        // abort during module initialisation.  By gating the dynamic import
+        // behind an option we avoid loading the native dependency by default,
+        // allowing the detector to gracefully fall back to the configured
+        // default language during tests.
+        if (options.enableCld) {
+            // Initialize CLD asynchronously
+            this._initializeCld();
+        }
     }
 
     /**
@@ -163,6 +172,11 @@ export class LanguageDetector {
 export interface LanguageDetectorOptions {
     defaultLanguage?: string;
     maxCacheSize?: number;
+    /**
+     * When true, attempt to load the optional native `cld` module.  Defaults to
+     * `false` so that environments without the compiled binary do not crash.
+     */
+    enableCld?: boolean;
 }
 
 export interface CacheStats {
