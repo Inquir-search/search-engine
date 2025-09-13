@@ -150,7 +150,11 @@ export class QueryEngine {
 
         // Overwrite any existing document with the same id for simplicity
         if (this.documents.has(docIdString)) {
+            // Remove existing document from store and inverted index to avoid stale tokens
             this.documents.delete(docIdString);
+            if (typeof (this.invertedIndex as any).deleteDocument === 'function') {
+                (this.invertedIndex as any).deleteDocument(docIdString);
+            }
         }
 
         // Ensure mappings contain all fields so that QueryProcessor can work
@@ -205,6 +209,11 @@ export class QueryEngine {
                 });
             }
         });
+
+        // Invalidate query processor caches so new tokens are visible in searches
+        if (this.processor && typeof (this.processor as any).invalidateCache === 'function') {
+            (this.processor as any).invalidateCache();
+        }
     }
 
     /**
@@ -252,9 +261,10 @@ export class QueryEngine {
             // ignore and rely on fallback
         }
 
-        // Fallback to naive scan if no documents found
-        if (docIds.size === 0) {
-            docIds = this._naiveScan(query, context);
+        // Fallback to naive scan if it yields more comprehensive results
+        const naiveDocIds = this._naiveScan(query, context);
+        if (docIds.size === 0 || naiveDocIds.size > docIds.size) {
+            docIds = naiveDocIds;
         }
 
         // If the caller expects the legacy raw Set, detect that by checking if
@@ -952,10 +962,20 @@ export class QueryEngine {
 
         // Helper to extract lowercase tokens from string fields of a document
         const extractDocTokens = (doc: any): string[] => {
-            // Use domain service for token extraction
-            return this.documentProcessor.extractTextContent(doc, AnalyzerType.STANDARD).filter(token =>
-                token && !this._isStopword(token)
-            ).map(token => token.toLowerCase());
+            const baseTokens = this.documentProcessor
+                .extractTextContent(doc, AnalyzerType.STANDARD)
+                .filter(token => token && !this._isStopword(token))
+                .map(token => token.toLowerCase());
+
+            // Add normalized phone numbers for fields that look like phone numbers
+            this.documentProcessor.iterateFieldsWithCallback(doc, (key, value) => {
+                if (typeof value === 'string' && key.toLowerCase().includes('phone') && /[\d\-\+\(\)\s\.]+/.test(value)) {
+                    const normalized = value.replace(/[\s\-\(\)\.]/g, '').toLowerCase();
+                    if (normalized) baseTokens.push(normalized);
+                }
+            });
+
+            return baseTokens;
         };
 
         // String query: match across string fields only
@@ -1204,10 +1224,10 @@ export class QueryEngine {
             return tokens.includes(b);
         }
 
-        // For fuzzy queries we compare the ENTIRE field value to the query
-        // term rather than individual tokens – this prevents partial fuzzy
-        // matches like "documnt" matching "A unique document".
-        return this._levenshtein(a, b) <= fuzziness;
+        // For fuzzy queries, compare against individual tokens within the field
+        // so that "iphone" matches "iPhone 15 Pro Max".
+        const tokens = a.split(/\s+/);
+        return tokens.some(token => this._levenshtein(token, b) <= fuzziness);
     }
 
     private _testWildcard(fieldVal: any, pattern: string): boolean {
@@ -1334,8 +1354,13 @@ export class QueryEngine {
     /** Clear all stored documents and index – used by tests */
     clean(): void {
         this.documents.clear();
+        this._seqMap.clear();
+        this._seqCounter = 0;
         if (typeof (this.invertedIndex as any).clear === 'function') {
             (this.invertedIndex as any).clear();
+        }
+        if (this.processor && typeof (this.processor as any).invalidateCache === 'function') {
+            (this.processor as any).invalidateCache();
         }
     }
 
