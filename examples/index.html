@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rick and Morty Search Engine</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        .container {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            width: 280px;
+            background: rgba(0, 0, 0, 0.4);
+            border-right: 1px solid #444;
+            padding: 20px;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+
+        .main-content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 24px;
+            color: #7df9ff;
+            font-size: 2em;
+            text-shadow: 0 0 10px rgba(125, 249, 255, 0.5);
+            margin-top: 0;
+        }
+
+        .search-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 32px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            width: 100%;
+        }
+
+        .search-bar input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #444;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            color: #fff;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .search-bar input:focus {
+            outline: none;
+            border-color: #7df9ff;
+            box-shadow: 0 0 10px rgba(125, 249, 255, 0.3);
+        }
+
+        .search-bar input::placeholder {
+            color: #888;
+        }
+
+        .search-bar button {
+            padding: 12px 24px;
+            background: linear-gradient(45deg, #7df9ff, #00bfff);
+            border: none;
+            border-radius: 8px;
+            color: #000;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+
+        .search-bar button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(125, 249, 255, 0.4);
+        }
+
+        .facets {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .facet {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .facet-title {
+            font-weight: bold;
+            color: #7df9ff;
+            margin-bottom: 12px;
+            font-size: 1.1em;
+        }
+
+        .facet-option {
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .facet-option input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #7df9ff;
+        }
+
+        .facet-option label {
+            cursor: pointer;
+            font-size: 0.9em;
+            color: #ccc;
+            flex: 1;
+        }
+
+        .facet-option:hover label {
+            color: #fff;
+        }
+
+        .results {
+            max-width: none;
+            margin: 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+            padding: 0;
+        }
+
+        .result {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 0;
+            transition: all 0.2s ease;
+            height: fit-content;
+        }
+
+        .result:hover {
+            background: rgba(0, 0, 0, 0.4);
+            border-color: #7df9ff;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(125, 249, 255, 0.2);
+        }
+
+        .result-content {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: center;
+            text-align: center;
+        }
+
+        .result-image {
+            flex-shrink: 0;
+        }
+
+        .result-image img {
+            width: 80px;
+            height: 80px;
+            border-radius: 8px;
+            object-fit: cover;
+            border: 2px solid #444;
+            transition: border-color 0.2s ease;
+        }
+
+        .result:hover .result-image img {
+            border-color: #7df9ff;
+        }
+
+        .result-info {
+            flex: 1;
+            width: 100%;
+        }
+
+        .name {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #7df9ff;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 0.8em;
+            color: #ccc;
+        }
+
+        .meta span {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 3px 6px;
+            border-radius: 4px;
+            border: 1px solid #555;
+            text-align: center;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 24px;
+            flex-wrap: wrap;
+        }
+
+        .pagination button {
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .pagination button:hover {
+            background: rgba(125, 249, 255, 0.2);
+            border-color: #7df9ff;
+        }
+
+        .pagination button.active {
+            background: #7df9ff;
+            color: #000;
+            border-color: #7df9ff;
+        }
+
+        .no-results {
+            text-align: center;
+            color: #ffb3b3;
+            margin-top: 32px;
+            font-size: 1.1em;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid #444;
+            }
+
+            .main-content {
+                padding: 16px;
+            }
+
+            .search-bar {
+                flex-direction: column;
+            }
+
+            .results {
+                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+                gap: 16px;
+            }
+
+            .result-content {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .result-image img {
+                width: 100px;
+                height: 100px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .results {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+
+            .result-image img {
+                width: 80px;
+                height: 80px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="facets" id="facets"></div>
+        </div>
+        <div class="main-content">
+            <h1>Rick and Morty Search Engine</h1>
+            <form class="search-bar" id="searchForm">
+                <input type="text" id="searchInput"
+                    placeholder="Search characters, locations, origins... (supports typos, word prefixes & partial matches)"
+                    autocomplete="off" />
+                <button type="submit">Search</button>
+            </form>
+            <div id="activeFilters" style="margin-bottom: 16px;"></div>
+            <div class="results" id="results"></div>
+            <div class="pagination" id="pagination"></div>
+        </div>
+    </div>
+    <script>
+        // --- Config ---
+        const API_BASE_URL = 'http://localhost:3000';
+        const INDEX_NAME = 'rickandmorty';
+        const PAGE_SIZE = 12;
+
+        // --- State ---
+        let currentPage = 0;
+        let currentQuery = '';
+        let currentFacets = {};
+        let totalResults = 0;
+        let availableFacets = {};
+        let indexExists = false;
+
+        // --- DOM ---
+        const searchForm = document.getElementById('searchForm');
+        const searchInput = document.getElementById('searchInput');
+        const facetsDiv = document.getElementById('facets');
+        const activeFiltersDiv = document.getElementById('activeFilters');
+        const resultsDiv = document.getElementById('results');
+        const paginationDiv = document.getElementById('pagination');
+
+        // --- Facet fields to display ---
+        const FACET_FIELDS = ['species', 'status', 'gender', 'origin', 'location'];
+
+        // --- Check if server and index exist by trying a search ---
+        async function checkServerStatus() {
+            try {
+                // Try a simple match_all query to test both server and index
+                const response = await fetch(`${API_BASE_URL}/search/${INDEX_NAME}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: { match_all: {} },
+                        size: 1
+                    })
+                });
+
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        // Index not found
+                        const errorData = await response.json();
+                        throw new Error(`Index not found: ${errorData.error}`);
+                    } else {
+                        throw new Error(`Server error: ${response.status} ${response.statusText}`);
+                    }
+                }
+
+                const data = await response.json();
+                indexExists = true;
+                console.log(`✓ Found ${INDEX_NAME} index with ${data.total || 0} documents`);
+                return true;
+            } catch (error) {
+                indexExists = false;
+
+                if (error.message.includes('Index not found') || error.message.includes('not found')) {
+                    resultsDiv.innerHTML = `
+                        <div style="text-align:center;color:#ffb3b3;padding:20px;">
+                            <h3>Rick and Morty Index Not Found</h3>
+                            <p>The Rick and Morty character index hasn't been created yet.</p>
+                            <p>To create it, run: <code style="background:rgba(0,0,0,0.3);padding:2px 4px;border-radius:3px;">node examples/test.js</code></p>
+                            <button onclick="window.location.reload()" style="margin-top:16px;padding:8px 16px;background:#7df9ff;color:#000;border:none;border-radius:4px;cursor:pointer;">
+                                Refresh Page
+                            </button>
+                        </div>
+                    `;
+                    searchInput.disabled = true;
+                    searchInput.placeholder = "Index not available - run examples/test.js first";
+                } else {
+                    resultsDiv.innerHTML = `
+                        <div style="text-align:center;color:#ffb3b3;padding:20px;">
+                            <h3>Server Connection Error</h3>
+                            <p>Cannot connect to the search server at ${API_BASE_URL}</p>
+                            <p>Please make sure the server is running: <code style="background:rgba(0,0,0,0.3);padding:2px 4px;border-radius:3px;">node server.js</code></p>
+                            <button onclick="window.location.reload()" style="margin-top:16px;padding:8px 16px;background:#7df9ff;color:#000;border:none;border-radius:4px;cursor:pointer;">
+                                Retry Connection
+                            </button>
+                        </div>
+                    `;
+                    searchInput.disabled = true;
+                    searchInput.placeholder = "Server not available";
+                }
+                return false;
+            }
+        }
+
+        // --- Event Listeners ---
+        searchForm.addEventListener('submit', e => {
+            e.preventDefault();
+            if (!indexExists) return;
+            currentQuery = searchInput.value.trim();
+            currentPage = 0;
+            fetchAndRender();
+        });
+
+        // Add real-time search on input
+        let searchTimeout;
+        searchInput.addEventListener('input', e => {
+            clearTimeout(searchTimeout);
+            if (!indexExists) return;
+            searchTimeout = setTimeout(() => {
+                currentQuery = e.target.value.trim();
+                currentPage = 0;
+                fetchAndRender();
+            }, 50); // 300ms delay to avoid too many requests
+        });
+
+        facetsDiv.addEventListener('change', e => {
+            if (e.target.matches('input[type="checkbox"]')) {
+                const [facet, value] = e.target.value.split(':');
+
+                // Initialize facet set if it doesn't exist
+                if (!currentFacets[facet]) {
+                    currentFacets[facet] = new Set();
+                }
+
+                // Add or remove the value based on checkbox state
+                if (e.target.checked) {
+                    currentFacets[facet].add(value);
+                } else {
+                    currentFacets[facet].delete(value);
+                    // Remove empty facet sets
+                    if (currentFacets[facet].size === 0) {
+                        delete currentFacets[facet];
+                    }
+                }
+
+                // Reset page and fetch new results immediately
+                currentPage = 0;
+                fetchAndRender();
+            }
+        });
+
+        // Removed updateApplyBtnState()
+        // Removed applyFacets()
+
+        // --- Fetch and Render ---
+        async function fetchAndRender() {
+            if (!indexExists) return;
+
+            resultsDiv.innerHTML = '<div style="text-align:center;color:#7df9ff;">Loading...</div>';
+
+            try {
+                // Build request with query and aggregations
+                const requestBody = buildRequest();
+
+                console.log('Search request:', requestBody);
+
+                const response = await fetch(`${API_BASE_URL}/search/${INDEX_NAME}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                    let errorMessage = `Error: ${response.status} ${response.statusText}`;
+                    try {
+                        const errorData = await response.json();
+                        if (errorData.error) {
+                            errorMessage = errorData.error;
+                        }
+                    } catch (e) {
+                        // Ignore JSON parse errors
+                    }
+                    throw new Error(errorMessage);
+                }
+
+                const data = await response.json();
+                console.log('Search response:', data);
+
+                totalResults = data.total || 0;
+
+                // Extract facets from aggregations response or fall back to legacy facets
+                if (data.aggregations) {
+                    availableFacets = extractFacetsFromAggregations(data.aggregations);
+                } else {
+                    // Backward compatibility: use legacy facets format
+                    availableFacets = data.facets || {};
+                }
+
+                renderFacets();
+                renderActiveFilters();
+                renderResults(data.hits || []);
+                renderPagination();
+
+            } catch (error) {
+                console.error('Search error:', error);
+                resultsDiv.innerHTML = `
+                    <div class="no-results">
+                        Search Error: ${error.message}
+                        <br><br>
+                        <button onclick="fetchAndRender()" style="padding:8px 16px;background:#7df9ff;color:#000;border:none;border-radius:4px;cursor:pointer;">
+                            Retry Search
+                        </button>
+                    </div>
+                `;
+                facetsDiv.innerHTML = '';
+                activeFiltersDiv.innerHTML = '';
+                paginationDiv.innerHTML = '';
+            }
+        }
+
+        function extractFacetsFromAggregations(aggregations) {
+            const facets = {};
+
+            // Convert aggregations format to legacy facets format for UI compatibility
+            const aggToFacetMap = {
+                'species': 'species',
+                'status': 'status',
+                'gender': 'gender',
+                'origin': 'origin',
+                'location': 'location'
+            };
+
+            for (const [aggName, facetField] of Object.entries(aggToFacetMap)) {
+                if (aggregations[aggName] && aggregations[aggName].buckets) {
+                    facets[facetField] = {};
+                    for (const bucket of aggregations[aggName].buckets) {
+                        facets[facetField][bucket.key] = bucket.doc_count;
+                    }
+                }
+            }
+
+            return facets;
+        }
+
+        function buildRequest() {
+            const request = {
+                from: currentPage * PAGE_SIZE,
+                size: PAGE_SIZE,
+                aggs: {
+                    // Define aggregations for facets
+                    species: {
+                        terms: {
+                            field: 'species',
+                            size: 50
+                        }
+                    },
+                    status: {
+                        terms: {
+                            field: 'status',
+                            size: 20
+                        }
+                    },
+                    gender: {
+                        terms: {
+                            field: 'gender',
+                            size: 20
+                        }
+                    },
+                    origin: {
+                        terms: {
+                            field: 'origin',
+                            size: 50
+                        }
+                    },
+                    location: {
+                        terms: {
+                            field: 'location',
+                            size: 50
+                        }
+                    }
+                }
+            };
+
+            // Build query structure
+            if (!currentQuery && Object.keys(currentFacets).length === 0) {
+                // No search term and no facets - return all documents
+                request.query = { match_all: {} };
+                return request;
+            }
+
+            const boolQuery = {
+                must: [],
+                should: [],
+                filter: []
+            };
+
+            // Add text search if query exists
+            if (currentQuery) {
+                // Multi-strategy search: exact, prefix, wildcard, and fuzzy for comprehensive matching
+                boolQuery.should.push(
+                    // Exact match queries (highest boost)
+                    { match: { field: 'name', value: currentQuery, boost: 4.0 } },
+                    { match: { field: 'species', value: currentQuery, boost: 3.0 } },
+                    { match: { field: 'status', value: currentQuery, boost: 3.0 } },
+
+                    // Field prefix queries (start of field)
+                    { prefix: { field: 'name', value: currentQuery, boost: 3.5 } },
+                    { prefix: { field: 'species', value: currentQuery, boost: 2.5 } },
+                    { prefix: { field: 'origin', value: currentQuery, boost: 2.0 } },
+                    { prefix: { field: 'location', value: currentQuery, boost: 2.0 } },
+
+                    // Wildcard queries for word prefixes anywhere in text
+                    { wildcard: { field: 'name', value: `*${currentQuery}*`, boost: 2.5 } },
+                    { wildcard: { field: 'species', value: `*${currentQuery}*`, boost: 2.0 } },
+                    { wildcard: { field: 'origin', value: `*${currentQuery}*`, boost: 1.8 } },
+                    { wildcard: { field: 'location', value: `*${currentQuery}*`, boost: 1.8 } },
+                    { wildcard: { field: 'status', value: `*${currentQuery}*`, boost: 1.5 } },
+
+                    // Word prefix patterns (space + query for word boundaries)
+                    { wildcard: { field: 'name', value: `* ${currentQuery}*`, boost: 3.0 } },
+                    { wildcard: { field: 'origin', value: `* ${currentQuery}*`, boost: 2.2 } },
+                    { wildcard: { field: 'location', value: `* ${currentQuery}*`, boost: 2.2 } },
+
+                    // Fuzzy queries (typo tolerance)
+                    { fuzzy: { field: 'name', value: currentQuery, fuzziness: 2, boost: 1.5 } },
+                    { fuzzy: { field: 'species', value: currentQuery, fuzziness: 1, boost: 1.2 } },
+                    { fuzzy: { field: 'origin', value: currentQuery, fuzziness: 2, boost: 1.0 } },
+                    { fuzzy: { field: 'location', value: currentQuery, fuzziness: 2, boost: 1.0 } },
+                    { fuzzy: { field: 'status', value: currentQuery, fuzziness: 1, boost: 1.0 } }
+                );
+                boolQuery.minimum_should_match = 1;
+            }
+
+            // Add facet filters
+            for (const [facet, values] of Object.entries(currentFacets)) {
+                if (values.size > 0) {
+                    const facetValues = Array.from(values);
+                    if (facetValues.length === 1) {
+                        boolQuery.filter.push({ match: { field: facet, value: facetValues[0] } });
+                    } else {
+                        // Multiple values for same facet - use OR logic
+                        boolQuery.filter.push({
+                            bool: {
+                                should: facetValues.map(value => ({ match: { field: facet, value: value } })),
+                                minimum_should_match: 1
+                            }
+                        });
+                    }
+                }
+            }
+
+            // Clean up empty arrays
+            if (boolQuery.must.length === 0) delete boolQuery.must;
+            if (boolQuery.should.length === 0) delete boolQuery.should;
+            if (boolQuery.filter.length === 0) delete boolQuery.filter;
+
+            // If we only have should clauses or no clauses, return appropriate query
+            if (Object.keys(boolQuery).length === 0) {
+                request.query = { match_all: {} };
+            } else {
+                request.query = { bool: boolQuery };
+            }
+
+            return request;
+        }
+
+        function renderFacets() {
+            facetsDiv.innerHTML = '';
+
+            // Add Clear All Filters button if any filters are active
+            const hasActiveFilters = Object.keys(currentFacets).some(facet => currentFacets[facet].size > 0);
+            if (hasActiveFilters) {
+                const clearBtn = document.createElement('button');
+                clearBtn.textContent = 'Clear All Filters';
+                clearBtn.style.marginBottom = '16px';
+                clearBtn.style.width = '100%';
+                clearBtn.style.padding = '8px 0';
+                clearBtn.style.background = 'rgba(255, 99, 71, 0.8)';
+                clearBtn.style.color = '#fff';
+                clearBtn.style.border = 'none';
+                clearBtn.style.borderRadius = '6px';
+                clearBtn.style.cursor = 'pointer';
+                clearBtn.style.fontSize = '0.9em';
+                clearBtn.onclick = () => {
+                    currentFacets = {};
+                    currentPage = 0;
+                    fetchAndRender();
+                };
+                facetsDiv.appendChild(clearBtn);
+            }
+
+            FACET_FIELDS.forEach(facet => {
+                const facetData = availableFacets[facet];
+                if (!facetData || Object.keys(facetData).length === 0) return;
+
+                const facetBox = document.createElement('div');
+                facetBox.className = 'facet';
+                const title = document.createElement('div');
+                title.className = 'facet-title';
+                title.textContent = facet.charAt(0).toUpperCase() + facet.slice(1);
+                facetBox.appendChild(title);
+
+                // Sort facet values by count (descending)
+                const sortedEntries = Object.entries(facetData).sort((a, b) => b[1] - a[1]);
+
+                sortedEntries.forEach(([value, count]) => {
+                    const option = document.createElement('div');
+                    option.className = 'facet-option';
+                    const id = `facet-${facet}-${value.replace(/[^a-zA-Z0-9]/g, '_')}`;
+                    const checked = currentFacets[facet] && currentFacets[facet].has(value);
+                    option.innerHTML = `
+                        <input type="checkbox" id="${id}" value="${facet}:${value}" ${checked ? 'checked' : ''} />
+                        <label for="${id}">${value} <span style="color:#7df9ff;">(${count})</span></label>
+                    `;
+                    facetBox.appendChild(option);
+                });
+                facetsDiv.appendChild(facetBox);
+            });
+        }
+
+        function renderActiveFilters() {
+            activeFiltersDiv.innerHTML = '';
+
+            // Show active filters and result count
+            const activeFilters = Object.keys(currentFacets).filter(facet => currentFacets[facet].size > 0);
+
+            if (activeFilters.length > 0 || currentQuery) {
+                const filterSummary = document.createElement('div');
+                filterSummary.style.background = 'rgba(0, 0, 0, 0.3)';
+                filterSummary.style.border = '1px solid #444';
+                filterSummary.style.borderRadius = '8px';
+                filterSummary.style.padding = '12px';
+                filterSummary.style.color = '#ccc';
+                filterSummary.style.fontSize = '0.9em';
+
+                let summaryText = `Found ${totalResults} results`;
+
+                if (currentQuery) {
+                    summaryText += ` for "${currentQuery}"`;
+                }
+
+                if (activeFilters.length > 0) {
+                    const filterTexts = activeFilters.map(facet => {
+                        const values = Array.from(currentFacets[facet]);
+                        return `${facet}: ${values.join(', ')}`;
+                    });
+                    summaryText += ` with filters: ${filterTexts.join(' | ')}`;
+                }
+
+                filterSummary.innerHTML = summaryText;
+                activeFiltersDiv.appendChild(filterSummary);
+            }
+        }
+
+        function renderResults(hits) {
+            resultsDiv.innerHTML = '';
+            if (!hits.length) {
+                resultsDiv.innerHTML = '<div class="no-results">No results found. Try a different search or remove some filters!</div>';
+                return;
+            }
+            hits.forEach(hit => {
+                const div = document.createElement('div');
+                div.className = 'result';
+                div.innerHTML = `
+                    <div class="result-content">
+                        <div class="result-image">
+                            <img src="${hit.image || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIiBmaWxsPSIjMzMzMzMzIi8+Cjx0ZXh0IHg9IjUwIiB5PSI1MCIgZm9udC1mYW1pbHk9IkFyaWFsLCBzYW5zLXNlcmlmIiBmb250LXNpemU9IjEyIiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIEltYWdlPC90ZXh0Pgo8L3N2Zz4='}" alt="${hit.name || 'Character'}" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIiBmaWxsPSIjMzMzMzMzIi8+Cjx0ZXh0IHg9IjUwIiB5PSI1MCIgZm9udC1mYW1pbHk9IkFyaWFsLCBzYW5zLXNlcmlmIiBmb250LXNpemU9IjEyIiBmaWxsPSJ3aGl0ZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPk5vIEltYWdlPC90ZXh0Pgo8L3N2Zz4='" />
+                        </div>
+                        <div class="result-info">
+                            <div class="name">${hit.name || 'Unknown'}</div>
+                            <div class="meta">
+                                <span>Status: ${hit.status || 'Unknown'}</span>
+                                <span>Species: ${hit.species || 'Unknown'}</span>
+                                <span>Gender: ${hit.gender || 'Unknown'}</span>
+                                <span>Origin: ${hit.origin || 'Unknown'}</span>
+                                <span>Location: ${hit.location || 'Unknown'}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                resultsDiv.appendChild(div);
+            });
+        }
+
+        function renderPagination() {
+            paginationDiv.innerHTML = '';
+            const totalPages = Math.ceil(totalResults / PAGE_SIZE);
+            if (totalPages <= 1) return;
+
+            const makeBtn = (label, page, active = false) => {
+                const btn = document.createElement('button');
+                btn.textContent = label;
+                if (active) btn.classList.add('active');
+                btn.onclick = () => {
+                    currentPage = page;
+                    fetchAndRender();
+                };
+                return btn;
+            };
+
+            // Prev
+            if (currentPage > 0) paginationDiv.appendChild(makeBtn('Prev', currentPage - 1));
+
+            // Page numbers
+            for (let i = 0; i < totalPages; i++) {
+                if (i === 0 || i === totalPages - 1 || Math.abs(i - currentPage) <= 2) {
+                    paginationDiv.appendChild(makeBtn(i + 1, i, i === currentPage));
+                } else if (i === currentPage - 3 || i === currentPage + 3) {
+                    const dots = document.createElement('span');
+                    dots.textContent = '...';
+                    dots.style.padding = '0 6px';
+                    paginationDiv.appendChild(dots);
+                }
+            }
+
+            // Next
+            if (currentPage < totalPages - 1) paginationDiv.appendChild(makeBtn('Next', currentPage + 1));
+        }
+
+        // --- Initialize Application ---
+        async function initializeApp() {
+            const serverOk = await checkServerStatus();
+            if (serverOk && indexExists) {
+                // Initial load
+                fetchAndRender();
+            }
+        }
+
+        // Start the application
+        initializeApp();
+    </script>
+</body>
+
+</html>
