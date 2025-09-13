@@ -245,17 +245,13 @@ export class QueryProcessor {
                 return { documents: new Set() };
             }
 
-            let results = new Set<string>();
+            let results: Set<string> | null = null;
 
             // Process filter clauses first (mandatory)
             if (boolQuery.filter && Array.isArray(boolQuery.filter)) {
                 for (const filterClause of boolQuery.filter) {
                     const filterResult = this.execute(filterClause);
-                    if (results.size === 0) {
-                        results = new Set(filterResult.documents);
-                    } else {
-                        results = new Set([...results].filter(docId => filterResult.documents.has(docId)));
-                    }
+                    results = results ? new Set([...results].filter(id => filterResult.documents.has(id))) : new Set(filterResult.documents);
                 }
             }
 
@@ -263,15 +259,11 @@ export class QueryProcessor {
             if (boolQuery.must && Array.isArray(boolQuery.must)) {
                 for (const mustClause of boolQuery.must) {
                     const mustResult = this.execute(mustClause);
-                    if (results.size === 0) {
-                        results = new Set(mustResult.documents);
-                    } else {
-                        results = new Set([...results].filter(docId => mustResult.documents.has(docId)));
-                    }
+                    results = results ? new Set([...results].filter(id => mustResult.documents.has(id))) : new Set(mustResult.documents);
                 }
             }
 
-            // Process should clauses (optional, but at least one must match if minimum_should_match is set)
+            // Process should clauses (optional)
             if (boolQuery.should && Array.isArray(boolQuery.should) && boolQuery.should.length > 0) {
                 const shouldResults = new Set<string>();
                 for (const shouldClause of boolQuery.should) {
@@ -281,23 +273,24 @@ export class QueryProcessor {
                     }
                 }
 
-                // If we have must/filter results, intersect with should results
-                if (results.size > 0) {
-                    results = new Set([...results].filter(docId => shouldResults.has(docId)));
-                } else {
+                if (!results || results.size === 0) {
+                    // No mandatory clauses – results are the union of should clauses
                     results = shouldResults;
-                }
+                } else if (boolQuery.minimum_should_match) {
+                    // Enforce minimum_should_match by intersecting with should results
+                    results = new Set([...results].filter(id => shouldResults.has(id)));
+                } // otherwise, keep existing results (should only affects scoring)
             }
 
             // Process must_not clauses (exclusion)
             if (boolQuery.must_not && Array.isArray(boolQuery.must_not)) {
                 for (const mustNotClause of boolQuery.must_not) {
                     const mustNotResult = this.execute(mustNotClause);
-                    results = new Set([...results].filter(docId => !mustNotResult.documents.has(docId)));
+                    results = results ? new Set([...results].filter(id => !mustNotResult.documents.has(id))) : new Set();
                 }
             }
 
-            return { documents: results };
+            return { documents: results || new Set() };
         }
         return { documents: new Set() };
     }
