@@ -77,6 +77,9 @@ export default class SearchEngine {
         const state = this.persistence.loadSnapshotSync();
         if (state) {
             this.documents = new Map(state.documents);
+            // Ensure query engine uses the restored documents map
+            this.queryEngine.documents = this.documents;
+
             this.invertedIndex.index = new Map(
                 state.invertedIndex.map(([term, posting]) => [term, new Map(posting)])
             );
@@ -84,6 +87,11 @@ export default class SearchEngine {
             this.totalDocs = state.totalDocs;
             this.avgDocLength = state.avgDocLength;
             console.log(`Restored snapshot with ${this.totalDocs} documents`);
+
+            // Rebuild facet index from restored documents
+            for (const doc of this.documents.values()) {
+                this.facetEngine.add(doc);
+            }
 
             // Validate document consistency
             const docIds = new Set(this.documents.keys());
