@@ -1224,10 +1224,13 @@ export class QueryEngine {
             return tokens.includes(b);
         }
 
-        // For fuzzy queries, compare against individual tokens within the field
-        // so that "iphone" matches "iPhone 15 Pro Max".
-        const tokens = a.split(/\s+/);
-        return tokens.some(token => this._levenshtein(token, b) <= fuzziness);
+        // For fuzzy queries, split both the field value and query into tokens
+        // and ensure each query token approximately matches at least one field token.
+        const fieldTokens = a.split(/\s+/);
+        const queryTokens = b.split(/\s+/);
+        return queryTokens.every(qt =>
+            fieldTokens.some(ft => this._levenshtein(ft, qt) <= fuzziness)
+        );
     }
 
     private _testWildcard(fieldVal: any, pattern: string): boolean {
