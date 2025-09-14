@@ -1444,10 +1444,9 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
             if (restoredData.snapshot?.documents) {
                 console.log(`🔄 Populating SharedMemoryStore with ${restoredData.snapshot.documents.size} documents for index '${indexName}'`);
 
-                // Update the SharedMemoryStore to use the correct index name
-                this.sharedMemoryStore = new SharedMemoryStore({
-                    indexName: indexName
-                });
+                if (!this.sharedMemoryStore) {
+                    this.sharedMemoryStore = new SharedMemoryStore({ indexName: 'default' });
+                }
 
                 let addedCount = 0;
                 for (const doc of restoredData.snapshot.documents.values()) {
@@ -1466,7 +1465,6 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
 
                 console.log(`✅ SharedMemoryStore populated with ${addedCount} documents for index '${indexName}'`);
 
-                // Verify the main SharedMemoryStore has the documents
                 const stats = this.sharedMemoryStore.getStats();
                 console.log(`📊 Main SharedMemoryStore stats: ${stats.totalDocs} total documents`);
             }

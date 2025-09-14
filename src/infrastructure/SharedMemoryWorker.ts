@@ -573,10 +573,10 @@ class SharedMemoryWorkerService {
 
             console.log(`🔄 Worker ${this.workerId}: Restoring ${documents.length} documents for index '${indexName}'`);
 
-            // Update SharedMemoryStore with the correct index name
-            this.sharedMemoryStore = new SharedMemoryStore({
-                indexName: indexName
-            });
+            // Ensure SharedMemoryStore exists
+            if (!this.sharedMemoryStore) {
+                this.sharedMemoryStore = new SharedMemoryStore({ indexName: 'default' });
+            }
 
             // Add documents to SharedMemoryStore with proper indexing
             let addedCount = 0;

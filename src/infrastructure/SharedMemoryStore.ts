@@ -107,24 +107,26 @@ export default class SharedMemoryStore {
      */
     addDocument(doc: any): DocumentAddResult {
         try {
-            // Create composite key for multi-index support
             const indexName = doc.indexName || this.indexName;
             const compositeKey = `${indexName}:${doc.id}`;
 
-            // Check if document already exists with the same composite key
             if (this.documents.has(compositeKey)) {
                 return { docId: this.documents.size, wasAdded: false };
             }
 
-            // Add document to SearchEngine with composite ID to prevent conflicts
+            // Ensure the search engine has an index for this document
+            const existingIndices = this.searchEngine.listIndices();
+            if (!existingIndices.includes(indexName)) {
+                (this.searchEngine as any)._createIndexSync(indexName, {});
+            }
+
             const docForSearchEngine = {
                 ...doc,
-                id: compositeKey // Use composite key as the document ID in SearchEngine
+                id: compositeKey
             };
-            this.searchEngine.add(docForSearchEngine);
+            this.searchEngine.add(docForSearchEngine, indexName);
 
-            // Store in local map for quick access using composite key
-            this.documents.set(compositeKey, doc);
+            this.documents.set(compositeKey, { ...doc, indexName });
 
             return { docId: this.documents.size, wasAdded: true };
         } catch (error) {
