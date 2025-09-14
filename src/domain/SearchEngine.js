@@ -6,6 +6,7 @@ import InvertedIndex from "./InvertedIndex.js";
 
 export default class SearchEngine {
     constructor({
+        name = 'default',
         tokenizer,
         scorerFactory,
         invertedIndex,
@@ -18,6 +19,7 @@ export default class SearchEngine {
         aof,
         flushIntervalMs = 10000
     }) {
+        this.name = name;
         this.tokenizer = tokenizer;
         this.scorerFactoryBuilder = scorerFactory || (() => ({ score: () => 1 }));
         this.invertedIndex = invertedIndex;
@@ -76,6 +78,9 @@ export default class SearchEngine {
 
         const state = this.persistence.loadSnapshotSync();
         if (state) {
+            if (state.indexName) {
+                this.name = state.indexName;
+            }
             this.documents = new Map(state.documents);
             // Ensure query engine uses the restored documents map
             this.queryEngine.documents = this.documents;
@@ -138,6 +143,7 @@ export default class SearchEngine {
             docLengths: Array.from(this.docLengths.entries()),
             totalDocs: this.totalDocs,
             avgDocLength: this.avgDocLength,
+            indexName: this.name,
         };
         this.persistence.saveSnapshot(state);
         console.log('Flushed snapshot');

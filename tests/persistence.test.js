@@ -33,6 +33,7 @@ test('restores documents from snapshot without modification', async () => {
         new BM25Scorer(totalDocs, avgDocLength, docLengths, index);
 
     let engine = new SearchEngine({
+        name: 'persistenceIndex',
         tokenizer: new Tokenizer(stopwordsManager),
         scorerFactory,
         invertedIndex: new InvertedIndex(),
@@ -51,15 +52,17 @@ test('restores documents from snapshot without modification', async () => {
     const snapshot = JSON.parse(await readFile(snapshotPath, 'utf-8'));
     assert.deepStrictEqual(
         Object.keys(snapshot).sort(),
-        ['avgDocLength', 'docLengths', 'documents', 'invertedIndex', 'totalDocs']
+        ['avgDocLength', 'docLengths', 'documents', 'indexName', 'invertedIndex', 'totalDocs']
     );
     assert.deepStrictEqual(snapshot.documents, [['doc1', doc]]);
+    assert.strictEqual(snapshot.indexName, 'persistenceIndex');
 
     engine.shutdown();
 
     // Recreate engine to load from snapshot
     const persistenceReload = new SnapshotPersistence(snapshotPath);
     engine = new SearchEngine({
+        name: 'persistenceIndex',
         tokenizer: new Tokenizer(stopwordsManager),
         scorerFactory,
         invertedIndex: new InvertedIndex(),
@@ -72,6 +75,7 @@ test('restores documents from snapshot without modification', async () => {
     });
 
     const results = engine.search('persistent');
+    assert.strictEqual(engine.name, 'persistenceIndex');
     assert.strictEqual(results.hits.length, 1);
     assert.deepStrictEqual(engine.documents.get('doc1'), doc);
     assert.deepStrictEqual(results.facets, { status: { A: 1 } });
