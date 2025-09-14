@@ -2,6 +2,7 @@ import { cpus } from 'os';
 import SearchWorker from './SearchWorker';
 import EventEmitter from 'events';
 import { getConfigManager } from './ConfigManager';
+import TaskQueue from './TaskQueue';
 import { getErrorMessage, createErrorResult, logError } from '../lib/utils/ErrorUtils';
 import { logOperationStart, logOperationComplete, logOperationFailed, logWorkerTask } from '../lib/utils/LoggingUtils';
 
@@ -130,8 +131,8 @@ export default class WorkerPool extends EventEmitter {
     private readonly allWorkers: SearchWorker[] = [];
 
     // Task queues with proper typing
-    private readonly readQueue: TaskDefinition[] = [];
-    private readonly writeQueue: TaskDefinition[] = [];
+    private readonly readQueue = new TaskQueue<TaskDefinition>();
+    private readonly writeQueue = new TaskQueue<TaskDefinition>();
     private readonly pendingTasks: Map<string, TaskDefinition> = new Map();
 
     // Load balancing and performance tracking
@@ -270,7 +271,7 @@ export default class WorkerPool extends EventEmitter {
     private processReadTask(): void {
         if (this.readQueue.length === 0) return;
 
-        const task = this.readQueue.shift()!;
+        const task = this.readQueue.dequeue()!;
         const worker = this.findBestWorker(task.operation.type, task.operation.indexName);
 
         if (worker) {
@@ -278,14 +279,14 @@ export default class WorkerPool extends EventEmitter {
             this.executeTask(worker, task);
         } else {
             // Put task back in queue if no worker available
-            this.readQueue.unshift(task);
+            this.readQueue.enqueueFront(task);
         }
     }
 
     private processWriteTask(): void {
         if (this.writeQueue.length === 0) return;
 
-        const task = this.writeQueue.shift()!;
+        const task = this.writeQueue.dequeue()!;
         const worker = this.findBestWorker(task.operation.type, task.operation.indexName);
 
         if (worker) {
@@ -293,7 +294,7 @@ export default class WorkerPool extends EventEmitter {
             this.executeTask(worker, task);
         } else {
             // Put task back in queue if no worker available
-            this.writeQueue.unshift(task);
+            this.writeQueue.enqueueFront(task);
         }
     }
 
@@ -446,9 +447,9 @@ export default class WorkerPool extends EventEmitter {
 
             // Add to appropriate queue
             if (this.isReadOperation(operation.type)) {
-                this.readQueue.push(task);
+                this.readQueue.enqueue(task);
             } else {
-                this.writeQueue.push(task);
+                this.writeQueue.enqueue(task);
             }
 
             // Track task
@@ -697,8 +698,8 @@ export default class WorkerPool extends EventEmitter {
 
     async shutdown(): Promise<void> {
         // Stop accepting new tasks
-        this.readQueue.length = 0;
-        this.writeQueue.length = 0;
+        this.readQueue.clear();
+        this.writeQueue.clear();
 
         // Wait for pending tasks to complete (with timeout)
         const shutdownTimeout = setTimeout(() => {

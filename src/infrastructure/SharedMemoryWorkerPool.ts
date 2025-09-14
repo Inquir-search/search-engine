@@ -5,6 +5,7 @@ import EventEmitter from 'events';
 import { Worker } from 'worker_threads';
 import { getConfigManager } from './ConfigManager';
 import { SharedQueryProcessor } from '../domain/query/SharedQueryProcessor';
+import TaskQueue from './TaskQueue';
 import {
     SharedMemoryWorkerPoolConfiguration,
     WorkerThread,
@@ -34,7 +35,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     private readonly workerTasks: Map<string, number> = new Map();
 
     // Task management
-    private readonly taskQueue: TaskDefinition[] = [];
+    private readonly taskQueue = new TaskQueue<TaskDefinition>();
     private readonly pendingTasks: Map<number, TaskDefinition> = new Map();
     private taskCounter: number = 0;
 
@@ -320,7 +321,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     private processTasks(): void {
         // Process tasks with round-robin distribution and proper load balancing
         while (this.taskQueue.length > 0 && this.availableWorkers.length > 0) {
-            const task = this.taskQueue.shift();
+            const task = this.taskQueue.dequeue();
 
             if (!task) break;
 
@@ -349,7 +350,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
                 this.executeTask(selectedWorker, task);
             } else {
                 // Put task back in queue if no worker available
-                this.taskQueue.unshift(task);
+                this.taskQueue.enqueueFront(task);
                 break;
             }
         }
@@ -391,7 +392,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
             };
 
             this.pendingTasks.set(taskId, task);
-            this.taskQueue.push(task);
+            this.taskQueue.enqueue(task);
             this.stats.totalTasks++;
         });
     }
@@ -1910,7 +1911,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
         this.availableWorkers.length = 0;
         this.busyWorkers.clear();
         this.pendingTasks.clear();
-        this.taskQueue.length = 0;
+        this.taskQueue.clear();
 
     }
 
