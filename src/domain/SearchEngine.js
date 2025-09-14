@@ -272,22 +272,7 @@ export default class SearchEngine {
 
         // If no query is provided, return all documents
         if (!query || (typeof query === 'object' && Object.keys(query).length === 0)) {
-            const allDocs = Array.from(this.documents.values()).map(doc => ({
-                ...doc,
-                _score: 1.0 // Default score for all documents
-            }));
-
-            // Apply pagination
-            const paginatedDocs = allDocs.slice(from, from + size);
-
-            const facets = this.facetEngine.calculate(new Set(paginatedDocs.map(d => d.id)));
-            return {
-                hits: paginatedDocs,
-                facets,
-                total: this.totalDocs,
-                from,
-                size
-            };
+            return this._returnAllDocs(from, size);
         }
 
         let finalQuery = query;
@@ -299,20 +284,7 @@ export default class SearchEngine {
             // First tokenize to get filtered tokens
             const queryTerms = this.tokenizer.tokenize(query, 'standard');
             if (queryTerms.length === 0) {
-                const allDocs = Array.from(this.documents.values()).map(doc => ({
-                    ...doc,
-                    _score: 1.0 // Default score for all documents
-                }));
-                // Apply pagination
-                const paginatedDocs = allDocs.slice(from, from + size);
-                const facets = this.facetEngine.calculate(new Set(allDocs.map(d => d.id)));
-                return {
-                    hits: paginatedDocs,
-                    facets,
-                    total: allDocs.length,
-                    from,
-                    size
-                };
+                return this._returnAllDocs(from, size, true);
             }
 
             // Determine operator: 'and' or 'or' (default: 'and' for backwards compatibility)
@@ -401,51 +373,18 @@ export default class SearchEngine {
 
             // Process should clauses
             if (finalQuery.bool.should && Array.isArray(finalQuery.bool.should)) {
-                for (const clause of finalQuery.bool.should) {
-                    if (clause && clause.match && clause.match.field && clause.match.value) {
-                        const field = clause.match.field;
-                        const analyzer = (this.mappingsManager.getFieldType(field) === 'keyword') ? 'keyword' : 'standard';
-                        const tokens = tokenizer.tokenize(clause.match.value, analyzer);
-                        queryTermsByField[field] = tokens;
-                    } else if (clause && (clause.term || clause.prefix || clause.wildcard || clause.fuzzy || clause.range || clause.geo_distance || clause.match_phrase || clause.phrase)) {
-                        // Non-match clauses are considered to have valid terms (not stopwords)
-                        hasNonMatchClauses = true;
-                    }
-                }
+                hasNonMatchClauses = this._collectTokensFromClauses(finalQuery.bool.should, tokenizer, queryTermsByField) || hasNonMatchClauses;
             }
 
             // Process must clauses
             if (finalQuery.bool.must && Array.isArray(finalQuery.bool.must)) {
-                for (const clause of finalQuery.bool.must) {
-                    if (clause && clause.match && clause.match.field && clause.match.value) {
-                        const field = clause.match.field;
-                        const analyzer = (this.mappingsManager.getFieldType(field) === 'keyword') ? 'keyword' : 'standard';
-                        const tokens = tokenizer.tokenize(clause.match.value, analyzer);
-                        queryTermsByField[field] = tokens;
-                    } else if (clause && (clause.term || clause.prefix || clause.wildcard || clause.fuzzy || clause.range || clause.geo_distance || clause.match_phrase || clause.phrase)) {
-                        // Non-match clauses are considered to have valid terms (not stopwords)
-                        hasNonMatchClauses = true;
-                    }
-                }
+                hasNonMatchClauses = this._collectTokensFromClauses(finalQuery.bool.must, tokenizer, queryTermsByField) || hasNonMatchClauses;
             }
 
             allEmpty = Object.values(queryTermsByField).every(arr => arr.length === 0) && !hasNonMatchClauses;
         }
         if (allEmpty) {
-            const allDocs = Array.from(this.documents.values()).map(doc => ({
-                ...doc,
-                _score: 1.0 // Default score for all documents
-            }));
-            // Apply pagination
-            const paginatedDocs = allDocs.slice(from, from + size);
-            const facets = this.facetEngine.calculate(new Set(paginatedDocs.map(d => d.id)));
-            return {
-                hits: paginatedDocs,
-                facets,
-                total: this.totalDocs,
-                from,
-                size
-            };
+            return this._returnAllDocs(from, size);
         }
 
         const docIds = this.queryEngine.search(finalQuery, context);
@@ -486,6 +425,38 @@ export default class SearchEngine {
             from,
             size
         };
+    }
+
+    _returnAllDocs(from, size, facetsFromAll = false) {
+        const allDocs = Array.from(this.documents.values()).map(doc => ({
+            ...doc,
+            _score: 1.0
+        }));
+        const paginatedDocs = allDocs.slice(from, from + size);
+        const facetDocs = facetsFromAll ? allDocs : paginatedDocs;
+        const facets = this.facetEngine.calculate(new Set(facetDocs.map(d => d.id)));
+        return {
+            hits: paginatedDocs,
+            facets,
+            total: this.totalDocs,
+            from,
+            size
+        };
+    }
+
+    _collectTokensFromClauses(clauses, tokenizer, queryTermsByField) {
+        let hasNonMatch = false;
+        for (const clause of clauses) {
+            if (clause && clause.match && clause.match.field && clause.match.value) {
+                const field = clause.match.field;
+                const analyzer = (this.mappingsManager.getFieldType(field) === 'keyword') ? 'keyword' : 'standard';
+                const tokens = tokenizer.tokenize(clause.match.value, analyzer);
+                queryTermsByField[field] = tokens;
+            } else if (clause && (clause.term || clause.prefix || clause.wildcard || clause.fuzzy || clause.range || clause.geo_distance || clause.match_phrase || clause.phrase)) {
+                hasNonMatch = true;
+            }
+        }
+        return hasNonMatch;
     }
 
     clean() {

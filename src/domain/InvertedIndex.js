@@ -3,17 +3,6 @@ export default class InvertedIndex {
         this.index = new Map();
     }
 
-    _ensurePostingArray(token, docId) {
-        if (!this.index.has(token)) {
-            this.index.set(token, new Map());
-        }
-        const posting = this.index.get(token);
-        if (!posting.has(docId)) {
-            posting.set(docId, []);
-        }
-        return posting.get(docId);
-    }
-
     /**
      * Adds a token with its position in the document
      */

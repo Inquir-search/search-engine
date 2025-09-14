@@ -139,18 +139,15 @@ export default class RankingPipeline {
                 return 'standard';
             };
 
-            // Process must clauses
-            for (const clause of must) {
+            const processClause = clause => {
                 if (clause.match) {
                     const field = clause.match.field;
                     const queryText = clause.match.value;
                     if (!terms[field]) {
                         terms[field] = [];
                     }
-                    // Use correct analyzer for field type
                     const analyzer = getAnalyzer(field, mappingsManager);
                     const tokens = tokenizer.tokenize(queryText, analyzer);
-                    // console.log('Tokenizer tokens for field', field, 'with analyzer', analyzer, ':', tokens);
                     terms[field].push(...tokens);
                 } else if (clause.term) {
                     const field = clause.term.field;
@@ -158,39 +155,18 @@ export default class RankingPipeline {
                     if (!terms[field]) {
                         terms[field] = [];
                     }
-                    // Use correct analyzer for field type
                     const analyzer = getAnalyzer(field, mappingsManager);
                     const tokens = tokenizer.tokenize(value, analyzer);
-                    // console.log('Tokenizer tokens for field', field, 'with analyzer', analyzer, ':', tokens);
                     terms[field].push(...tokens);
                 }
+            };
+
+            for (const clause of must) {
+                processClause(clause);
             }
 
-            // Process should clauses
             for (const clause of should) {
-                if (clause.match) {
-                    const field = clause.match.field;
-                    const queryText = clause.match.value;
-                    if (!terms[field]) {
-                        terms[field] = [];
-                    }
-                    // Use correct analyzer for field type
-                    const analyzer = getAnalyzer(field, mappingsManager);
-                    const tokens = tokenizer.tokenize(queryText, analyzer);
-                    // console.log('Tokenizer tokens for field', field, 'with analyzer', analyzer, ':', tokens);
-                    terms[field].push(...tokens);
-                } else if (clause.term) {
-                    const field = clause.term.field;
-                    const value = clause.term.value;
-                    if (!terms[field]) {
-                        terms[field] = [];
-                    }
-                    // Use correct analyzer for field type
-                    const analyzer = getAnalyzer(field, mappingsManager);
-                    const tokens = tokenizer.tokenize(value, analyzer);
-                    // console.log('Tokenizer tokens for field', field, 'with analyzer', analyzer, ':', tokens);
-                    terms[field].push(...tokens);
-                }
+                processClause(clause);
             }
         } else if (typeof query === 'string') {
             // Fallback for simple string queries: assume all fields

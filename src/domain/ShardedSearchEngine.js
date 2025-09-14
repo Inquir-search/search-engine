@@ -1,4 +1,5 @@
 import SearchEngine from './SearchEngine.js';
+import { mergeSearchResults } from './SearchResultAggregator.js';
 
 export default class ShardedSearchEngine {
     constructor({ shardCount = 1, searchEngineFactory }) {
@@ -39,26 +40,8 @@ export default class ShardedSearchEngine {
     }
 
     search(query, context = {}) {
-        const shardResults = this.shards.map(shard => shard.search(query, context));
-        const hits = shardResults.flatMap(r => r.hits);
-        hits.sort((a, b) => b._score - a._score);
-
-        const from = context.from || 0;
-        const size = context.size !== undefined ? context.size : 10;
-        const paginatedHits = hits.slice(from, from + size);
-
-        const facets = {};
-        for (const result of shardResults) {
-            for (const [field, values] of Object.entries(result.facets || {})) {
-                if (!facets[field]) facets[field] = {};
-                for (const [val, count] of Object.entries(values)) {
-                    facets[field][val] = (facets[field][val] || 0) + count;
-                }
-            }
-        }
-
-        const total = shardResults.reduce((sum, r) => sum + r.total, 0);
-        return { hits: paginatedHits, facets, total, from, size };
+        const shardResults = this.shards.map(shard => shard.search(query, { from: 0, size: Number.MAX_SAFE_INTEGER }));
+        return mergeSearchResults(shardResults, context);
     }
 
     flush() {

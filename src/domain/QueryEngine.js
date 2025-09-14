@@ -152,12 +152,7 @@ export default class QueryEngine {
                 return wordDocs;
             });
 
-            // Intersect all sets to find documents containing ALL words
-            let result = wordSets[0] || new Set();
-            for (let i = 1; i < wordSets.length; i++) {
-                result = new Set([...result].filter(docId => wordSets[i].has(docId)));
-            }
-            return result;
+            return this._intersectSets(wordSets);
         }
         return new Set();
     }
@@ -228,6 +223,22 @@ export default class QueryEngine {
         return this._geoToDocs(field, center, distance);
     }
 
+    _docsForPrefix(field, word) {
+        const docs = new Set();
+        for (const token of this.invertedIndex.index.keys()) {
+            if (token.startsWith(`${field}:`)) {
+                const term = token.split(':')[1];
+                if (term && term.startsWith(word)) {
+                    const posting = this.invertedIndex.getPosting(token);
+                    for (const docId of posting.keys()) {
+                        docs.add(docId);
+                    }
+                }
+            }
+        }
+        return docs;
+    }
+
     _prefixToDocs(field, prefix) {
         if (!prefix || !field) return new Set();
         // Tokenize the prefix string to handle multi-word prefixes
@@ -235,44 +246,11 @@ export default class QueryEngine {
 
         if (prefixWords.length === 1) {
             // Single word prefix - match tokens where the term starts with the prefix
-            const word = prefixWords[0];
-            const result = new Set();
-            for (const token of this.invertedIndex.index.keys()) {
-                if (token.startsWith(`${field}:`)) {
-                    const term = token.split(':')[1];
-                    if (term && term.startsWith(word)) {
-                        const posting = this.invertedIndex.getPosting(token);
-                        for (const docId of posting.keys()) {
-                            result.add(docId);
-                        }
-                    }
-                }
-            }
-            return result;
+            return this._docsForPrefix(field, prefixWords[0]);
         } else if (prefixWords.length > 1) {
             // Multi-word prefix - find documents that contain ALL words (AND logic)
-            const wordSets = prefixWords.map(word => {
-                const wordDocs = new Set();
-                for (const token of this.invertedIndex.index.keys()) {
-                    if (token.startsWith(`${field}:`)) {
-                        const term = token.split(':')[1];
-                        if (term && term.startsWith(word)) {
-                            const posting = this.invertedIndex.getPosting(token);
-                            for (const docId of posting.keys()) {
-                                wordDocs.add(docId);
-                            }
-                        }
-                    }
-                }
-                return wordDocs;
-            });
-
-            // Intersect all sets to find documents containing ALL words
-            let result = wordSets[0] || new Set();
-            for (let i = 1; i < wordSets.length; i++) {
-                result = new Set([...result].filter(docId => wordSets[i].has(docId)));
-            }
-            return result;
+            const wordSets = prefixWords.map(word => this._docsForPrefix(field, word));
+            return this._intersectSets(wordSets);
         }
         return new Set();
     }
@@ -369,24 +347,6 @@ export default class QueryEngine {
             }
         }
         return result;
-    }
-
-    _checkPositionsWithSlop(positionsList, slop = 0) {
-        // For each position in the first term
-        for (const start of positionsList[0]) {
-            let match = true;
-            // For each subsequent term, check if it has a position at start + i (+/- slop)
-            for (let i = 1; i < positionsList.length; i++) {
-                const expected = start + i;
-                const positions = positionsList[i];
-                if (!positions.some(p => Math.abs(p - expected) <= slop)) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) return true;
-        }
-        return false;
     }
 
     _checkPhrase(positionsList, slop = 0) {
