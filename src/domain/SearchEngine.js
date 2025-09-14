@@ -80,9 +80,8 @@ export default class SearchEngine {
             // Ensure query engine uses the restored documents map
             this.queryEngine.documents = this.documents;
 
-            this.invertedIndex.index = new Map(
-                state.invertedIndex.map(([term, posting]) => [term, new Map(posting)])
-            );
+            this.invertedIndex = InvertedIndex.deserialize(state.invertedIndex);
+            this.queryEngine.invertedIndex = this.invertedIndex;
             this.docLengths = new Map(state.docLengths);
             this.totalDocs = state.totalDocs;
             this.avgDocLength = state.avgDocLength;
@@ -135,15 +134,13 @@ export default class SearchEngine {
 
         const state = {
             documents: Array.from(this.documents.entries()),
-            invertedIndex: Array.from(this.invertedIndex.index.entries()).map(
-                ([term, posting]) => [term, Array.from(posting.entries())]
-            ),
+            invertedIndex: this.invertedIndex.serialize(),
             docLengths: Array.from(this.docLengths.entries()),
             totalDocs: this.totalDocs,
             avgDocLength: this.avgDocLength,
         };
         this.persistence.saveSnapshot(state);
-        console.log(`Flushed snapshot at ${new Date().toISOString()}`);
+        console.log('Flushed snapshot');
     }
 
     shutdown() {

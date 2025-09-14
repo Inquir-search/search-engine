@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { unlink } from 'node:fs/promises';
+import { unlink, readFile } from 'node:fs/promises';
 
 import SearchEngine from '../src/domain/SearchEngine.js';
 import Tokenizer from '../src/domain/Tokenizer.js';
@@ -47,6 +47,14 @@ test('restores documents from snapshot without modification', async () => {
     const doc = { id: 'doc1', name: 'persistent doc', status: 'A' };
     engine.add(doc);
     engine.flush();
+
+    const snapshot = JSON.parse(await readFile(snapshotPath, 'utf-8'));
+    assert.deepStrictEqual(
+        Object.keys(snapshot).sort(),
+        ['avgDocLength', 'docLengths', 'documents', 'invertedIndex', 'totalDocs']
+    );
+    assert.deepStrictEqual(snapshot.documents, [['doc1', doc]]);
+
     engine.shutdown();
 
     // Recreate engine to load from snapshot
@@ -67,6 +75,15 @@ test('restores documents from snapshot without modification', async () => {
     assert.strictEqual(results.hits.length, 1);
     assert.deepStrictEqual(engine.documents.get('doc1'), doc);
     assert.deepStrictEqual(results.facets, { status: { A: 1 } });
+
+    const serializedIndex = engine.invertedIndex.serialize();
+    assert.deepStrictEqual(snapshot.invertedIndex, serializedIndex);
+
+    // Ensure index tokens map back to the original doc ID
+    for (const [term, posting] of serializedIndex) {
+        const docIds = posting.map(([docId]) => docId);
+        assert.deepStrictEqual(docIds, ['doc1']);
+    }
 
     engine.shutdown();
     await unlink(snapshotPath).catch(() => { });

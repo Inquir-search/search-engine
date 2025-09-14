@@ -80,4 +80,40 @@ export default class InvertedIndex {
         }
         return arr;
     }
+
+    /**
+     * Serializes the inverted index into a JSON-friendly structure with
+     * deterministic ordering for tokens and document IDs.
+     */
+    serialize() {
+        const terms = Array.from(this.index.keys()).sort();
+        return terms.map(term => {
+            const posting = this.index.get(term);
+            const docIds = Array.from(posting.keys()).sort();
+            const serializedPosting = docIds.map(docId => {
+                const info = posting.get(docId);
+                const positions = Array.from(info.positions || []).sort((a, b) => a - b);
+                return [docId, { positions }];
+            });
+            return [term, serializedPosting];
+        });
+    }
+
+    /**
+     * Recreates an inverted index from its serialized representation.
+     */
+    static deserialize(data) {
+        const index = new InvertedIndex();
+        if (!Array.isArray(data)) return index;
+
+        for (const [term, posting] of data) {
+            const postingMap = new Map();
+            for (const [docId, docInfo] of posting) {
+                const positions = Array.from(docInfo.positions || []).sort((a, b) => a - b);
+                postingMap.set(docId, { positions });
+            }
+            index.index.set(term, postingMap);
+        }
+        return index;
+    }
 }
