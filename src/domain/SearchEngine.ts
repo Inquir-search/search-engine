@@ -635,9 +635,10 @@ export default class SearchEngine {
             }
         }
 
+        const totalCount = typeof query === 'string' ? hits.length : ranked.length;
         const resultObj: any = {
             hits,
-            total: hits.length,
+            total: totalCount,
             from: fromIdx,
             size: sizeReq
         };
