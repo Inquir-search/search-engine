@@ -50,7 +50,7 @@ export class DocumentAddedEvent {
     }
 
     private _generateEventId(): string {
-        return `${this.eventType}-${this.documentId.value}-${this.indexName.value}-${Date.now()}`;
+        return `${this.eventType}-${this.documentId.value}-${this.indexName.value}`;
     }
 
     toJSON(): DocumentAddedEventJSON {

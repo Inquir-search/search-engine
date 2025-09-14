@@ -200,6 +200,13 @@ export default class SearchEngine {
     }
 
     /**
+     * Ensure an index exists, creating it if necessary
+     */
+    ensureIndex(indexName: string, options: any = {}): void {
+        this._createIndexSync(indexName, options);
+    }
+
+    /**
      * Get the index data object
      */
     _getIndex(indexName: string) {
@@ -628,9 +635,10 @@ export default class SearchEngine {
             }
         }
 
+        const totalCount = typeof query === 'string' ? hits.length : ranked.length;
         const resultObj: any = {
             hits,
-            total: hits.length,
+            total: totalCount,
             from: fromIdx,
             size: sizeReq
         };

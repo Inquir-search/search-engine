@@ -5,6 +5,8 @@ import EventEmitter from 'events';
 import { Worker } from 'worker_threads';
 import { getConfigManager } from './ConfigManager';
 import { SharedQueryProcessor } from '../domain/query/SharedQueryProcessor';
+import TaskQueue from './TaskQueue';
+import PersistenceCoordinator from './PersistenceCoordinator';
 import {
     SharedMemoryWorkerPoolConfiguration,
     WorkerThread,
@@ -34,7 +36,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     private readonly workerTasks: Map<string, number> = new Map();
 
     // Task management
-    private readonly taskQueue: TaskDefinition[] = [];
+    private readonly taskQueue = new TaskQueue<TaskDefinition>();
     private readonly pendingTasks: Map<number, TaskDefinition> = new Map();
     private taskCounter: number = 0;
 
@@ -64,12 +66,8 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     private readonly enablePersistence: boolean;
     private persistenceTimer: NodeJS.Timeout | null = null;
 
-    // Throttling for snapshot generation
-    private readonly snapshotThrottle: Map<string, {
-        timer: NodeJS.Timeout | null;
-        pendingDocuments: number;
-        lastSnapshot: number;
-    }> = new Map();
+    // Persistence coordination
+    private readonly persistence: PersistenceCoordinator;
 
     // Performance statistics
     private readonly stats: PoolStatistics;
@@ -108,6 +106,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
         this.sharedMemoryStore = new SharedMemoryStore({
             indexName: 'default'
         });
+        this.persistence = new PersistenceCoordinator(this.saveSnapshot.bind(this));
 
         // Initialize statistics
         this.stats = {
@@ -320,7 +319,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     private processTasks(): void {
         // Process tasks with round-robin distribution and proper load balancing
         while (this.taskQueue.length > 0 && this.availableWorkers.length > 0) {
-            const task = this.taskQueue.shift();
+            const task = this.taskQueue.dequeue();
 
             if (!task) break;
 
@@ -349,7 +348,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
                 this.executeTask(selectedWorker, task);
             } else {
                 // Put task back in queue if no worker available
-                this.taskQueue.unshift(task);
+                this.taskQueue.enqueueFront(task);
                 break;
             }
         }
@@ -391,7 +390,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
             };
 
             this.pendingTasks.set(taskId, task);
-            this.taskQueue.push(task);
+            this.taskQueue.enqueue(task);
             this.stats.totalTasks++;
         });
     }
@@ -1014,8 +1013,11 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     }
 
     // CRDT Helper Methods
-    private generateOperationId(): string {
-        return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    private operationSeq = 0;
+
+    private generateOperationId(type: string, indexName: string, documentId: string): string {
+        this.operationSeq += 1;
+        return `${type}-${indexName}-${documentId}-${this.operationSeq}`;
     }
 
     private getVectorClock(workerId: string): Map<string, number> {
@@ -1059,7 +1061,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     }
 
     private logOperation(type: 'add' | 'update' | 'delete', indexName: string, documentId: string, data?: any): string {
-        const operationId = this.generateOperationId();
+        const operationId = this.generateOperationId(type, indexName, documentId);
         const vectorClock = this.incrementVectorClock('main');
 
         const operation = {
@@ -1167,7 +1169,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
 
         try {
             // CRDT: Generate operation ID for idempotency
-            const operationId = this.generateOperationId();
+            const operationId = this.generateOperationId('add', indexName, `batch-${documents.length}`);
 
             // CRDT: Check for duplicate operations
             if (this.isDuplicateOperation(operationId)) {
@@ -1206,8 +1208,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
                 // Tag documents with indexName and add to in-memory storage
                 const taggedDocuments = documents.map(doc => ({
                     ...doc,
-                    indexName,
-                    _addedAt: Date.now()
+                    indexName
                 }));
                 arr.push(...taggedDocuments);
 
@@ -1248,41 +1249,19 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
             const successfulResults = results.filter(r => r.success);
             const totalAdded = successfulResults.reduce((sum, r) => sum + (r.addedCount || 0), 0);
 
-            // CRDT: Sync documents to main SharedMemoryStore for unified search with conflict resolution
+            // Sync documents to main SharedMemoryStore for unified search
             // Only sync if documents were actually added by workers
             if (totalAdded > 0) {
                 const taggedDocuments = documents.map(doc => ({
                     ...doc,
-                    indexName,
-                    _addedAt: Date.now(),
-                    _operationId: operationId, // CRDT: Track operation ID
-                    _vectorClock: this.getVectorClock('main') // CRDT: Include vector clock
+                    indexName
                 }));
 
                 for (const doc of taggedDocuments) {
                     try {
-                        // CRDT: Check if document exists and compare vector clocks
-                        const existingDoc = this.sharedMemoryStore.getDocument(doc.id);
-                        if (existingDoc) {
-                            // CRDT: Last-Write-Wins conflict resolution
-                            const existingClock = existingDoc._vectorClock || new Map();
-                            const newClock = doc._vectorClock || new Map();
-
-                            if (this.isOperationNewer(newClock, existingClock)) {
-                                console.log(`🔄 CRDT: Updating document ${doc.id} with newer version`);
-                                const result = this.sharedMemoryStore.addDocument(doc);
-                                if (result.wasAdded) {
-                                    this.logOperation('update', indexName, doc.id, { operationId });
-                                }
-                            } else {
-                                console.log(`🔄 CRDT: Keeping existing version of document ${doc.id} (newer vector clock)`);
-                            }
-                        } else {
-                            // New document - add it
-                            const result = this.sharedMemoryStore.addDocument(doc);
-                            if (result.wasAdded) {
-                                this.logOperation('add', indexName, doc.id, { operationId });
-                            }
+                        const result = this.sharedMemoryStore.addDocument(doc);
+                        if (result.wasAdded) {
+                            this.logOperation('add', indexName, doc.id, { operationId });
                         }
                     } catch (error) {
                         console.warn(`Failed to sync document ${doc.id} to main SharedMemoryStore:`, error);
@@ -1292,7 +1271,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
 
             // Throttled persistence to prevent snapshot spam
             if (this.enablePersistence && totalAdded > 0) {
-                this.scheduleThrottledSnapshot(indexName, totalAdded);
+                this.persistence.schedule(indexName, totalAdded);
             }
 
             return {
@@ -1466,15 +1445,14 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
             if (restoredData.snapshot?.documents) {
                 console.log(`🔄 Populating SharedMemoryStore with ${restoredData.snapshot.documents.size} documents for index '${indexName}'`);
 
-                // Update the SharedMemoryStore to use the correct index name
-                this.sharedMemoryStore = new SharedMemoryStore({
-                    indexName: indexName
-                });
+                if (!this.sharedMemoryStore) {
+                    this.sharedMemoryStore = new SharedMemoryStore({ indexName: 'default' });
+                }
 
                 let addedCount = 0;
                 for (const doc of restoredData.snapshot.documents.values()) {
                     if (doc.id) {
-                        const docWithIndex = { ...doc, indexName, _restoredAt: Date.now() };
+                        const docWithIndex = { ...doc, indexName };
                         try {
                             const result = this.sharedMemoryStore.addDocument(docWithIndex);
                             if (result && result.wasAdded) {
@@ -1488,7 +1466,6 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
 
                 console.log(`✅ SharedMemoryStore populated with ${addedCount} documents for index '${indexName}'`);
 
-                // Verify the main SharedMemoryStore has the documents
                 const stats = this.sharedMemoryStore.getStats();
                 console.log(`📊 Main SharedMemoryStore stats: ${stats.totalDocs} total documents`);
             }
@@ -1699,8 +1676,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
                     if (message.result && message.result.success) {
                         const taggedDocuments = documents.map(doc => ({
                             ...doc,
-                            indexName,
-                            _addedAt: Date.now()
+                            indexName
                         }));
 
                         for (const doc of taggedDocuments) {
@@ -1934,7 +1910,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
         this.availableWorkers.length = 0;
         this.busyWorkers.clear();
         this.pendingTasks.clear();
-        this.taskQueue.length = 0;
+        this.taskQueue.clear();
 
     }
 
@@ -1966,13 +1942,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
             this.persistenceTimer = null;
         }
 
-        // Clear all throttled snapshot timers
-        for (const [indexName, throttle] of this.snapshotThrottle.entries()) {
-            if (throttle.timer) {
-                clearTimeout(throttle.timer);
-            }
-        }
-        this.snapshotThrottle.clear();
+        this.persistence.clear();
     }
 
     /**
@@ -2011,56 +1981,4 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
         return results.map(r => r.status === 'fulfilled' ? r.value : { success: false, error: 'Worker failed' });
     }
 
-    /**
-     * Schedule throttled snapshot to prevent spam when many tasks are queued
-     */
-    private scheduleThrottledSnapshot(indexName: string, documentsAdded: number): void {
-        if (!this.snapshotThrottle.has(indexName)) {
-            this.snapshotThrottle.set(indexName, {
-                timer: null,
-                pendingDocuments: 0,
-                lastSnapshot: 0
-            });
-        }
-
-        const throttle = this.snapshotThrottle.get(indexName)!;
-        throttle.pendingDocuments += documentsAdded;
-
-        const now = Date.now();
-        const timeSinceLastSnapshot = now - throttle.lastSnapshot;
-        const minInterval = 10000; // Minimum 10 seconds between snapshots
-        const maxPendingDocs = 100; // Force snapshot after 100 pending documents
-
-        // Clear existing timer
-        if (throttle.timer) {
-            clearTimeout(throttle.timer);
-        }
-
-        // Determine delay based on current conditions
-        let delay: number;
-        if (throttle.pendingDocuments >= maxPendingDocs) {
-            // Force immediate snapshot for large batches
-            delay = 0;
-        } else if (timeSinceLastSnapshot < minInterval) {
-            // Wait for minimum interval
-            delay = minInterval - timeSinceLastSnapshot;
-        } else {
-            // Standard delay for moderate batches
-            delay = 5000; // 5 seconds
-        }
-
-        // Schedule throttled snapshot
-
-        throttle.timer = setTimeout(async () => {
-            try {
-                // Save snapshot
-                await this.saveSnapshot(indexName);
-                throttle.lastSnapshot = Date.now();
-                throttle.pendingDocuments = 0;
-                throttle.timer = null;
-            } catch (error) {
-                throttle.timer = null;
-            }
-        }, delay);
-    }
 }

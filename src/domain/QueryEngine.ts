@@ -1,6 +1,5 @@
 import { QueryParser } from './query/QueryParser.js';
 import { QueryProcessor } from './query/QueryProcessor.js';
-import { DocumentId } from './valueObjects/index.js';
 import { ISynonymEngine } from './SynonymEngine.js';
 import { ITokenizer, AnalyzerType } from './Tokenizer.js';
 import { IMappingsManager } from './MappingsManager.js';
@@ -8,6 +7,8 @@ import { ShardedInvertedIndex } from './ShardedInvertedIndex';
 import { DocumentProcessingService } from './services/DocumentProcessingService.js';
 import { FieldTypeDetectionService } from './services/FieldTypeDetectionService.js';
 import { QueryProcessingService } from './services/QueryProcessingService.js';
+import { DocumentRepository } from './services/DocumentRepository.js';
+import { DocumentIndexer } from './services/DocumentIndexer.js';
 // Removed unused external IDocumentsStore import – we declare the interface locally below.
 
 /**
@@ -79,17 +80,8 @@ export class QueryEngine {
     private readonly documentProcessor: DocumentProcessingService;
     private readonly fieldTypeDetector: FieldTypeDetectionService;
     private readonly queryProcessor: QueryProcessingService;
-
-    /**
-     * Internal sequence counter to track insertion order of documents.  This
-     * lets us apply deterministic tie-breaking rules ("most recently added
-     * wins") and perform de-duplication when multiple documents share the
-     * same logical content.
-     */
-    private _seqCounter = 0;
-
-    /** Map of documentId → insertion sequence */
-    private readonly _seqMap: Map<string, number> = new Map();
+    private readonly repository: DocumentRepository;
+    private readonly indexer: DocumentIndexer;
 
     constructor(
         invertedIndex: IInvertedIndex,
@@ -131,6 +123,8 @@ export class QueryEngine {
         this.documentProcessor = new DocumentProcessingService(tokenizer);
         this.fieldTypeDetector = new FieldTypeDetectionService();
         this.queryProcessor = new QueryProcessingService(tokenizer, this.documentProcessor);
+        this.repository = new DocumentRepository(documents, mappingsManager);
+        this.indexer = new DocumentIndexer(invertedIndex, tokenizer, this.documentProcessor, this.fieldTypeDetector);
     }
 
     /**
@@ -145,72 +139,14 @@ export class QueryEngine {
             throw new Error('Document must be an object with an id field');
         }
 
-        // Use string id as key for compatibility with SearchEngine
-        const docIdString = doc.id instanceof DocumentId ? doc.id.value : doc.id;
+        const { id, replaced } = this.repository.save(doc);
 
-        // Overwrite any existing document with the same id for simplicity
-        if (this.documents.has(docIdString)) {
-            // Remove existing document from store and inverted index to avoid stale tokens
-            this.documents.delete(docIdString);
-            if (typeof (this.invertedIndex as any).deleteDocument === 'function') {
-                (this.invertedIndex as any).deleteDocument(docIdString);
-            }
+        if (replaced) {
+            this.indexer.removeDocument(id);
         }
 
-        // Ensure mappings contain all fields so that QueryProcessor can work
-        if (this.mappingsManager) {
-            if (typeof (this.mappingsManager as any).autoMap === 'function') {
-                (this.mappingsManager as any).autoMap(doc);
-            } else if (typeof (this.mappingsManager as any).autoExtend === 'function') {
-                (this.mappingsManager as any).autoExtend(doc);
-            }
-        }
+        this.indexer.indexDocument(id, doc);
 
-        this.documents.set(docIdString, doc);
-
-        // Track insertion order (monotonic counter) so searches can prefer
-        // the most recently added version of logically duplicate content.
-        this._seqCounter += 1;
-        this._seqMap.set(docIdString, this._seqCounter);
-
-        // Use domain service for document processing
-        this.documentProcessor.iterateFieldsWithCallback(doc, (field, value, fieldName) => {
-            // Determine mapping type using domain service
-            const fieldTypeResult = this.fieldTypeDetector.detectFieldType(value, fieldName);
-            const fieldType = fieldTypeResult.type;
-
-            if (this.fieldTypeDetector.isTextLikeType(fieldType) && typeof value === 'string') {
-                // Choose analyzer based on field type for higher precision
-                let analyzer: AnalyzerType = AnalyzerType.STANDARD;
-                if (fieldType === 'email') analyzer = AnalyzerType.EMAIL;
-                else if (fieldType === 'url') analyzer = AnalyzerType.URL;
-
-                let tokens = this.tokenizer.tokenize(value, analyzer) || [];
-
-                // For phone-like fields, also add normalized version
-                if (field.toLowerCase().includes('phone') && /^[\d\-\+\(\)\s\.]+$/.test(value)) {
-                    const normalized = value.replace(/[\s\-\(\)\.]/g, '');
-                    if (normalized !== value) {
-                        // Add the normalized version as a single token
-                        tokens.push(normalized);
-                    }
-                }
-
-                // For URL fields we ignore purely numeric path segments to avoid noisy matches (e.g. /123)
-                if (fieldType === 'url') {
-                    tokens = tokens.filter(t => !/^\d+$/.test(t));
-                }
-
-                tokens.forEach((token, pos) => {
-                    const tokenKey = `${field}:${token}`;
-                    if (typeof (this.invertedIndex as any).addToken === 'function') {
-                        (this.invertedIndex as any).addToken(tokenKey, docIdString, pos);
-                    }
-                });
-            }
-        });
-
-        // Invalidate query processor caches so new tokens are visible in searches
         if (this.processor && typeof (this.processor as any).invalidateCache === 'function') {
             (this.processor as any).invalidateCache();
         }
@@ -286,9 +222,9 @@ export class QueryEngine {
 
         // Build hits array with deterministic tie-breaking (newer docs first)
         const scored = Array.from(docIds).map((id: string) => {
-            const doc = this.documents.get(id) || { id };
+            const doc = this.repository.get(id) || { id };
             const score = this._computeScore(doc, query);
-            const seq = this._seqMap.get(id) || 0;
+            const seq = this.repository.getSequence(id) || 0;
             return { ...doc, _score: score, __seq: seq };
         }).sort((a, b) => {
             if (b._score !== a._score) return b._score - a._score;
@@ -384,6 +320,89 @@ export class QueryEngine {
      * @returns Set of document IDs
      */
     execute(query: any): Set<string> {
+        if (!query) return new Set();
+
+        if (query.match_all) {
+            return new Set(this.documents.keys());
+        }
+
+        if (query.term) {
+            const field = query.term.field ?? Object.keys(query.term).find(k => k !== 'fuzziness');
+            const value = query.term.value ?? query.term[field];
+            const fuzz = query.term.fuzziness ?? 0;
+            return fuzz > 0 ? this._fuzzyToDocs(field, value, fuzz) : this._termToDocs(field, value);
+        }
+
+        if (query.match) {
+            const field = query.match.field ?? Object.keys(query.match).find(k => k !== 'fuzziness' && k !== 'boost');
+            const value = query.match.value ?? query.match[field];
+            const fuzz = query.match.fuzziness ?? 0;
+            return this._matchToDocs(field, value, fuzz);
+        }
+
+        if (query.prefix) {
+            const field = query.prefix.field ?? Object.keys(query.prefix)[0];
+            const value = query.prefix.value ?? query.prefix[field];
+            return this._prefixToDocs(field, value);
+        }
+
+        if (query.wildcard) {
+            const field = query.wildcard.field ?? Object.keys(query.wildcard)[0];
+            const value = query.wildcard.value ?? query.wildcard[field];
+            return this._wildcardToDocs(field, value);
+        }
+
+        if (query.range) {
+            const field = query.range.field ?? Object.keys(query.range)[0];
+            const opts = query.range[field] ?? query.range;
+            return this._rangeToDocs(field, opts);
+        }
+
+        if (query.fuzzy) {
+            const field = query.fuzzy.field ?? Object.keys(query.fuzzy)[0];
+            const value = query.fuzzy.value ?? query.fuzzy[field];
+            const fuzz = query.fuzzy.fuzziness ?? 1;
+            return this._fuzzyToDocs(field, value, fuzz);
+        }
+
+        if (query.phrase || query.match_phrase) {
+            const ph = query.phrase || query.match_phrase;
+            const field = ph.field ?? Object.keys(ph)[0];
+            const value = ph.value ?? ph[field];
+            const slop = ph.slop ?? 0;
+            return this._phraseToDocs(field, value, slop);
+        }
+
+        if (query.bool) {
+            const bool = query.bool;
+            const mustArr = Array.isArray(bool.must) ? bool.must : (bool.must ? [bool.must] : []);
+            const shouldArr = Array.isArray(bool.should) ? bool.should : (bool.should ? [bool.should] : []);
+            const mustNotArr = Array.isArray(bool.must_not) ? bool.must_not : (bool.must_not ? [bool.must_not] : []);
+            const filterArr = Array.isArray(bool.filter) ? bool.filter : (bool.filter ? [bool.filter] : []);
+
+            let result: Set<string> | null = null;
+            if (mustArr.length > 0) {
+                const sets = mustArr.map((q: any) => this.execute(q));
+                result = sets.reduce((acc, set) => this._intersectSets(acc, set));
+            }
+            if (filterArr.length > 0) {
+                const sets = filterArr.map((q: any) => this.execute(q));
+                const combined = sets.reduce((acc, set) => this._intersectSets(acc, set));
+                result = result ? this._intersectSets(result, combined) : combined;
+            }
+            if (shouldArr.length > 0) {
+                const sets = shouldArr.map((q: any) => this.execute(q));
+                const combined = sets.reduce((acc, set) => this._unionSets([acc, set]));
+                result = result ? this._intersectSets(result, combined) : combined;
+            }
+            if (mustNotArr.length > 0) {
+                const sets = mustNotArr.map((q: any) => this.execute(q));
+                const combined = sets.reduce((acc, set) => this._unionSets([acc, set]));
+                result = result ? this._differenceSets(result, combined) : new Set<string>();
+            }
+            return result || new Set();
+        }
+
         const result = this._search(query);
         return new Set(Array.from(result).map(id => id.value));
     }
@@ -773,9 +792,24 @@ export class QueryEngine {
      * @returns Set of document IDs
      */
     _termToDocs(field: string, value: string): Set<string> {
-        const termQuery = { term: { field, value } };
-        const result = this._search(termQuery);
-        return new Set(Array.from(result).map(id => id.value));
+        const token = String(value).toLowerCase();
+        const results = new Set<string>();
+
+        if (this.invertedIndex && typeof (this.invertedIndex as any).getDocuments === 'function') {
+            const docs = (this.invertedIndex as any).getDocuments(field, token) || [];
+            docs.forEach((id: string) => results.add(id));
+        }
+
+        if (results.size === 0 && this.documents) {
+            for (const [id, doc] of (this.documents as any).entries()) {
+                const fieldVal = this._getFieldValue(doc, field);
+                if (typeof fieldVal === 'string' && fieldVal.toLowerCase() === token) {
+                    results.add(id);
+                }
+            }
+        }
+
+        return results;
     }
 
     /**
@@ -785,9 +819,29 @@ export class QueryEngine {
      * @returns Set of document IDs
      */
     _prefixToDocs(field: string, value: string): Set<string> {
-        const prefixQuery = { prefix: { field, value } };
-        const result = this._search(prefixQuery);
-        return new Set(Array.from(result).map(id => id.value));
+        const prefix = String(value).toLowerCase();
+        const results = new Set<string>();
+
+        if (this.invertedIndex && typeof (this.invertedIndex as any).getFieldTokens === 'function') {
+            const tokens: string[] = (this.invertedIndex as any).getFieldTokens(field) || [];
+            for (const token of tokens) {
+                if (token.startsWith(prefix)) {
+                    const docs = (this.invertedIndex as any).getDocuments(field, token) || [];
+                    docs.forEach((id: string) => results.add(id));
+                }
+            }
+        }
+
+        if (results.size === 0 && this.documents) {
+            for (const [id, doc] of (this.documents as any).entries()) {
+                const fieldVal = this._getFieldValue(doc, field);
+                if (typeof fieldVal === 'string' && fieldVal.toLowerCase().startsWith(prefix)) {
+                    results.add(id);
+                }
+            }
+        }
+
+        return results;
     }
 
     /**
@@ -797,42 +851,36 @@ export class QueryEngine {
      * @returns Set of document IDs
      */
     _wildcardToDocs(field: string, value: string): Set<string> {
-        const wildcardQuery = { wildcard: { field, value } };
-        const result = this._search(wildcardQuery);
+        const escapeRegExp = (s: string) => s.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+        const regexPattern = '^' + String(value).split('').map(ch => {
+            if (ch === '*') return '.*';
+            if (ch === '?') return '.';
+            return escapeRegExp(ch);
+        }).join('') + '$';
+        const regex = new RegExp(regexPattern, 'i');
 
-        // Fallback: if underlying processor returns no documents, perform simple regex match
-        if (result.size === 0 && typeof (this.invertedIndex as any).getFieldTokens === 'function') {
-            // Convert wildcard pattern to RegExp: * => .*, ? => .
-            const escapeRegExp = (s: string) => s.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
-            const regexPattern = '^' + value.split('').map(ch => {
-                if (ch === '*') return '.*';
-                if (ch === '?') return '.';
-                return escapeRegExp(ch);
-            }).join('') + '$';
-            const regex = new RegExp(regexPattern, 'i');
+        const results = new Set<string>();
 
-            const matchingDocs = new Set<string>();
-            const tokens: string[] = (this.invertedIndex as any).getFieldTokens(field);
+        if (this.invertedIndex && typeof (this.invertedIndex as any).getFieldTokens === 'function') {
+            const tokens: string[] = (this.invertedIndex as any).getFieldTokens(field) || [];
             for (const token of tokens) {
                 if (regex.test(token)) {
                     const docs = (this.invertedIndex as any).getDocuments(field, token) || [];
-                    docs.forEach((docId) => matchingDocs.add(docId))
+                    docs.forEach((id: string) => results.add(id));
                 }
             }
-            if (matchingDocs.size === 0 && this.documents) {
-                const lowerRegex = new RegExp(regexPattern, 'i');
-                for (const [docId, doc] of (this.documents as any).entries()) {
-                    const fieldVal = doc[field];
-                    if (typeof fieldVal === 'string' && lowerRegex.test(fieldVal)) {
-                        matchingDocs.add(docId);
-                    }
-                }
-            }
-
-            return matchingDocs;
         }
 
-        return new Set(Array.from(result).map(id => id.value));
+        if (results.size === 0 && this.documents) {
+            for (const [id, doc] of (this.documents as any).entries()) {
+                const fieldVal = this._getFieldValue(doc, field);
+                if (typeof fieldVal === 'string' && regex.test(fieldVal)) {
+                    results.add(id);
+                }
+            }
+        }
+
+        return results;
     }
 
     /**
@@ -842,9 +890,18 @@ export class QueryEngine {
      * @returns Set of document IDs
      */
     _rangeToDocs(field: string, rangeOptions: RangeOptions): Set<string> {
-        const rangeQuery = { range: { field, ...rangeOptions } };
-        const result = this._search(rangeQuery);
-        return new Set(Array.from(result).map(id => id.value));
+        const results = new Set<string>();
+        for (const [id, doc] of (this.documents as any).entries()) {
+            const val = this._getFieldValue(doc, field);
+            if (val == null || typeof val === 'object') continue;
+            let ok = true;
+            if (rangeOptions.gte != null) ok = ok && val >= rangeOptions.gte;
+            if (rangeOptions.gt != null) ok = ok && val > rangeOptions.gt;
+            if (rangeOptions.lte != null) ok = ok && val <= rangeOptions.lte;
+            if (rangeOptions.lt != null) ok = ok && val < rangeOptions.lt;
+            if (ok) results.add(id);
+        }
+        return results;
     }
 
     /**
@@ -854,10 +911,26 @@ export class QueryEngine {
      * @param distance - Distance in kilometers
      * @returns Set of document IDs
      */
-    _geoDistanceToDocs(field: string, location: GeoLocation, distance: number): Set<string> {
-        const geoQuery = { geo_distance: { field, center: location, distance: distance.toString() } };
-        const result = this._search(geoQuery);
-        return new Set(Array.from(result).map(id => id.value));
+    _geoDistanceToDocs(field: string, location: GeoLocation, distance: number | string): Set<string> {
+        const results = new Set<string>();
+        let maxDist = typeof distance === 'number' ? distance : parseFloat(String(distance).replace(/m$/, '')) / 1000;
+        for (const [id, doc] of (this.documents as any).entries()) {
+            const val = this._getFieldValue(doc, field);
+            let lat: number | undefined;
+            let lon: number | undefined;
+            if (Array.isArray(val) && val.length === 2) {
+                [lat, lon] = val;
+            } else if (val && typeof val === 'object' && 'lat' in val && 'lon' in val) {
+                lat = val.lat;
+                lon = val.lon;
+            }
+            if (lat === undefined || lon === undefined) continue;
+            const d = this._haversine(lat, lon, location.lat, location.lon);
+            if (d <= maxDist) {
+                results.add(id);
+            }
+        }
+        return results;
     }
 
     /**
@@ -867,9 +940,33 @@ export class QueryEngine {
      * @param fuzziness - Fuzziness level
      * @returns Set of document IDs
      */
-    _fuzzyToDocs(field: string, value: string, fuzziness: number): Set<DocumentId> {
-        const fuzzyQuery = { fuzzy: { field, value, fuzziness } };
-        return this._search(fuzzyQuery);
+    _fuzzyToDocs(field: string, value: string, fuzziness: number = 1): Set<string> {
+        const target = String(value).toLowerCase();
+        const results = new Set<string>();
+
+        if (this.invertedIndex && typeof (this.invertedIndex as any).getFieldTokens === 'function') {
+            const tokens: string[] = (this.invertedIndex as any).getFieldTokens(field) || [];
+            for (const token of tokens) {
+                if (this._levenshtein(token.toLowerCase(), target) <= fuzziness) {
+                    const docs = (this.invertedIndex as any).getDocuments(field, token) || [];
+                    docs.forEach((id: string) => results.add(id));
+                }
+            }
+        }
+
+        if (results.size === 0 && this.documents) {
+            for (const [id, doc] of (this.documents as any).entries()) {
+                const fieldVal = this._getFieldValue(doc, field);
+                if (typeof fieldVal === 'string') {
+                    const tokens = fieldVal.toLowerCase().split(/\W+/);
+                    if (tokens.some(t => this._levenshtein(t, target) <= fuzziness)) {
+                        results.add(id);
+                    }
+                }
+            }
+        }
+
+        return results;
     }
 
     /**
@@ -879,9 +976,8 @@ export class QueryEngine {
      * @param fuzziness - Fuzziness level
      * @returns Set of document IDs
      */
-    _matchToDocs(field: string, value: string, fuzziness: number): Set<DocumentId> {
-        const matchQuery = { match: { field, value, fuzziness } };
-        return this._search(matchQuery);
+    _matchToDocs(field: string, value: string, fuzziness: number = 0): Set<string> {
+        return this._fuzzyToDocs(field, value, fuzziness);
     }
 
     /**
@@ -891,9 +987,70 @@ export class QueryEngine {
      * @param slop - Slop value
      * @returns Set of document IDs
      */
-    _phraseToDocs(field: string, value: string, slop: number): Set<DocumentId> {
-        const phraseQuery = { phrase: { field, value, slop } };
-        return this._search(phraseQuery);
+    _phraseToDocs(field: string, value: string, slop: number = 0): Set<string> {
+        const queryTokens = this.tokenizer.tokenize(String(value), AnalyzerType.STANDARD) || [];
+        if (queryTokens.length === 0) return new Set();
+
+        const results = new Set<string>();
+        for (const [id, doc] of (this.documents as any).entries()) {
+            const fieldVal = this._getFieldValue(doc, field);
+            if (typeof fieldVal !== 'string') continue;
+            const fieldTokens = this.tokenizer.tokenize(fieldVal, AnalyzerType.STANDARD) || [];
+            if (this._phraseMatches(fieldTokens, queryTokens, slop)) {
+                results.add(id);
+            }
+        }
+        return results;
+    }
+
+    private _phraseMatches(fieldTokens: string[], phraseTokens: string[], slop: number): boolean {
+        const window = phraseTokens.length;
+        for (let i = 0; i <= fieldTokens.length - window; i++) {
+            let k = i;
+            let j = 0;
+            while (k < fieldTokens.length && j < phraseTokens.length) {
+                if (fieldTokens[k] === phraseTokens[j]) {
+                    j++;
+                }
+                k++;
+            }
+            if (j === phraseTokens.length) {
+                if ((k - i - 1) <= slop + phraseTokens.length - 1) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private _unionSets(sets: Set<string>[]): Set<string> {
+        const result = new Set<string>();
+        for (const set of sets) {
+            for (const item of set) {
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
+    private _intersectSets(set1: Set<string>, set2: Set<string>): Set<string> {
+        const result = new Set<string>();
+        for (const item of set1) {
+            if (set2.has(item)) {
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
+    private _differenceSets(set1: Set<string>, set2: Set<string>): Set<string> {
+        const result = new Set<string>();
+        for (const item of set1) {
+            if (!set2.has(item)) {
+                result.add(item);
+            }
+        }
+        return result;
     }
 
     /**
@@ -1224,10 +1381,13 @@ export class QueryEngine {
             return tokens.includes(b);
         }
 
-        // For fuzzy queries, compare against individual tokens within the field
-        // so that "iphone" matches "iPhone 15 Pro Max".
-        const tokens = a.split(/\s+/);
-        return tokens.some(token => this._levenshtein(token, b) <= fuzziness);
+        // For fuzzy queries, split both the field value and query into tokens
+        // and ensure each query token approximately matches at least one field token.
+        const fieldTokens = a.split(/\s+/);
+        const queryTokens = b.split(/\s+/);
+        return queryTokens.every(qt =>
+            fieldTokens.some(ft => this._levenshtein(ft, qt) <= fuzziness)
+        );
     }
 
     private _testWildcard(fieldVal: any, pattern: string): boolean {
@@ -1353,9 +1513,7 @@ export class QueryEngine {
 
     /** Clear all stored documents and index – used by tests */
     clean(): void {
-        this.documents.clear();
-        this._seqMap.clear();
-        this._seqCounter = 0;
+        this.repository.clear();
         if (typeof (this.invertedIndex as any).clear === 'function') {
             (this.invertedIndex as any).clear();
         }
