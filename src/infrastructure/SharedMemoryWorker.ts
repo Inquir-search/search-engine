@@ -187,12 +187,12 @@ class SharedMemoryWorkerService {
                     }
 
                     // Tag document with indexName before adding to SearchEngine
-                    const taggedDoc = { ...doc, indexName, _addedAt: Date.now() };
-                    await searchEngine.add(taggedDoc);
+                    const docWithIndex = { ...doc, indexName };
+                    await searchEngine.add(docWithIndex);
 
                     // Also add to SharedMemoryStore for unified search across indices
                     try {
-                        this.sharedMemoryStore.addDocument(taggedDoc);
+                        this.sharedMemoryStore.addDocument(docWithIndex);
                     } catch (syncError) {
                         console.warn(`❌ Worker ${this.workerId}: Failed to sync document ${doc.id} to SharedMemoryStore:`, (syncError as Error).message);
                     }
@@ -223,8 +223,7 @@ class SharedMemoryWorkerService {
                 // Process document through shared memory store
                 const docToAdd = {
                     ...doc,
-                    indexName, // Add index name to document metadata
-                    _addedAt: Date.now()
+                    indexName // Add index name to document metadata
                 };
 
                 const result = this.sharedMemoryStore.addDocument(docToAdd);
@@ -586,8 +585,7 @@ class SharedMemoryWorkerService {
                     // Ensure document has proper structure for indexing
                     const docToAdd = {
                         ...doc,
-                        indexName: indexName,
-                        _restoredAt: Date.now()
+                        indexName: indexName
                     };
 
                     const result = this.sharedMemoryStore.addDocument(docToAdd);

@@ -1206,8 +1206,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
                 // Tag documents with indexName and add to in-memory storage
                 const taggedDocuments = documents.map(doc => ({
                     ...doc,
-                    indexName,
-                    _addedAt: Date.now()
+                    indexName
                 }));
                 arr.push(...taggedDocuments);
 
@@ -1248,41 +1247,19 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
             const successfulResults = results.filter(r => r.success);
             const totalAdded = successfulResults.reduce((sum, r) => sum + (r.addedCount || 0), 0);
 
-            // CRDT: Sync documents to main SharedMemoryStore for unified search with conflict resolution
+            // Sync documents to main SharedMemoryStore for unified search
             // Only sync if documents were actually added by workers
             if (totalAdded > 0) {
                 const taggedDocuments = documents.map(doc => ({
                     ...doc,
-                    indexName,
-                    _addedAt: Date.now(),
-                    _operationId: operationId, // CRDT: Track operation ID
-                    _vectorClock: this.getVectorClock('main') // CRDT: Include vector clock
+                    indexName
                 }));
 
                 for (const doc of taggedDocuments) {
                     try {
-                        // CRDT: Check if document exists and compare vector clocks
-                        const existingDoc = this.sharedMemoryStore.getDocument(doc.id);
-                        if (existingDoc) {
-                            // CRDT: Last-Write-Wins conflict resolution
-                            const existingClock = existingDoc._vectorClock || new Map();
-                            const newClock = doc._vectorClock || new Map();
-
-                            if (this.isOperationNewer(newClock, existingClock)) {
-                                console.log(`🔄 CRDT: Updating document ${doc.id} with newer version`);
-                                const result = this.sharedMemoryStore.addDocument(doc);
-                                if (result.wasAdded) {
-                                    this.logOperation('update', indexName, doc.id, { operationId });
-                                }
-                            } else {
-                                console.log(`🔄 CRDT: Keeping existing version of document ${doc.id} (newer vector clock)`);
-                            }
-                        } else {
-                            // New document - add it
-                            const result = this.sharedMemoryStore.addDocument(doc);
-                            if (result.wasAdded) {
-                                this.logOperation('add', indexName, doc.id, { operationId });
-                            }
+                        const result = this.sharedMemoryStore.addDocument(doc);
+                        if (result.wasAdded) {
+                            this.logOperation('add', indexName, doc.id, { operationId });
                         }
                     } catch (error) {
                         console.warn(`Failed to sync document ${doc.id} to main SharedMemoryStore:`, error);
@@ -1474,7 +1451,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
                 let addedCount = 0;
                 for (const doc of restoredData.snapshot.documents.values()) {
                     if (doc.id) {
-                        const docWithIndex = { ...doc, indexName, _restoredAt: Date.now() };
+                        const docWithIndex = { ...doc, indexName };
                         try {
                             const result = this.sharedMemoryStore.addDocument(docWithIndex);
                             if (result && result.wasAdded) {
@@ -1699,8 +1676,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
                     if (message.result && message.result.success) {
                         const taggedDocuments = documents.map(doc => ({
                             ...doc,
-                            indexName,
-                            _addedAt: Date.now()
+                            indexName
                         }));
 
                         for (const doc of taggedDocuments) {
