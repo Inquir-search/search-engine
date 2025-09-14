@@ -1,6 +1,5 @@
 import { QueryParser } from './query/QueryParser.js';
 import { QueryProcessor } from './query/QueryProcessor.js';
-import { DocumentId } from './valueObjects/index.js';
 import { ISynonymEngine } from './SynonymEngine.js';
 import { ITokenizer, AnalyzerType } from './Tokenizer.js';
 import { IMappingsManager } from './MappingsManager.js';
@@ -8,6 +7,8 @@ import { ShardedInvertedIndex } from './ShardedInvertedIndex';
 import { DocumentProcessingService } from './services/DocumentProcessingService.js';
 import { FieldTypeDetectionService } from './services/FieldTypeDetectionService.js';
 import { QueryProcessingService } from './services/QueryProcessingService.js';
+import { DocumentRepository } from './services/DocumentRepository.js';
+import { DocumentIndexer } from './services/DocumentIndexer.js';
 // Removed unused external IDocumentsStore import – we declare the interface locally below.
 
 /**
@@ -79,17 +80,8 @@ export class QueryEngine {
     private readonly documentProcessor: DocumentProcessingService;
     private readonly fieldTypeDetector: FieldTypeDetectionService;
     private readonly queryProcessor: QueryProcessingService;
-
-    /**
-     * Internal sequence counter to track insertion order of documents.  This
-     * lets us apply deterministic tie-breaking rules ("most recently added
-     * wins") and perform de-duplication when multiple documents share the
-     * same logical content.
-     */
-    private _seqCounter = 0;
-
-    /** Map of documentId → insertion sequence */
-    private readonly _seqMap: Map<string, number> = new Map();
+    private readonly repository: DocumentRepository;
+    private readonly indexer: DocumentIndexer;
 
     constructor(
         invertedIndex: IInvertedIndex,
@@ -131,6 +123,8 @@ export class QueryEngine {
         this.documentProcessor = new DocumentProcessingService(tokenizer);
         this.fieldTypeDetector = new FieldTypeDetectionService();
         this.queryProcessor = new QueryProcessingService(tokenizer, this.documentProcessor);
+        this.repository = new DocumentRepository(documents, mappingsManager);
+        this.indexer = new DocumentIndexer(invertedIndex, tokenizer, this.documentProcessor, this.fieldTypeDetector);
     }
 
     /**
@@ -145,72 +139,14 @@ export class QueryEngine {
             throw new Error('Document must be an object with an id field');
         }
 
-        // Use string id as key for compatibility with SearchEngine
-        const docIdString = doc.id instanceof DocumentId ? doc.id.value : doc.id;
+        const { id, replaced } = this.repository.save(doc);
 
-        // Overwrite any existing document with the same id for simplicity
-        if (this.documents.has(docIdString)) {
-            // Remove existing document from store and inverted index to avoid stale tokens
-            this.documents.delete(docIdString);
-            if (typeof (this.invertedIndex as any).deleteDocument === 'function') {
-                (this.invertedIndex as any).deleteDocument(docIdString);
-            }
+        if (replaced) {
+            this.indexer.removeDocument(id);
         }
 
-        // Ensure mappings contain all fields so that QueryProcessor can work
-        if (this.mappingsManager) {
-            if (typeof (this.mappingsManager as any).autoMap === 'function') {
-                (this.mappingsManager as any).autoMap(doc);
-            } else if (typeof (this.mappingsManager as any).autoExtend === 'function') {
-                (this.mappingsManager as any).autoExtend(doc);
-            }
-        }
+        this.indexer.indexDocument(id, doc);
 
-        this.documents.set(docIdString, doc);
-
-        // Track insertion order (monotonic counter) so searches can prefer
-        // the most recently added version of logically duplicate content.
-        this._seqCounter += 1;
-        this._seqMap.set(docIdString, this._seqCounter);
-
-        // Use domain service for document processing
-        this.documentProcessor.iterateFieldsWithCallback(doc, (field, value, fieldName) => {
-            // Determine mapping type using domain service
-            const fieldTypeResult = this.fieldTypeDetector.detectFieldType(value, fieldName);
-            const fieldType = fieldTypeResult.type;
-
-            if (this.fieldTypeDetector.isTextLikeType(fieldType) && typeof value === 'string') {
-                // Choose analyzer based on field type for higher precision
-                let analyzer: AnalyzerType = AnalyzerType.STANDARD;
-                if (fieldType === 'email') analyzer = AnalyzerType.EMAIL;
-                else if (fieldType === 'url') analyzer = AnalyzerType.URL;
-
-                let tokens = this.tokenizer.tokenize(value, analyzer) || [];
-
-                // For phone-like fields, also add normalized version
-                if (field.toLowerCase().includes('phone') && /^[\d\-\+\(\)\s\.]+$/.test(value)) {
-                    const normalized = value.replace(/[\s\-\(\)\.]/g, '');
-                    if (normalized !== value) {
-                        // Add the normalized version as a single token
-                        tokens.push(normalized);
-                    }
-                }
-
-                // For URL fields we ignore purely numeric path segments to avoid noisy matches (e.g. /123)
-                if (fieldType === 'url') {
-                    tokens = tokens.filter(t => !/^\d+$/.test(t));
-                }
-
-                tokens.forEach((token, pos) => {
-                    const tokenKey = `${field}:${token}`;
-                    if (typeof (this.invertedIndex as any).addToken === 'function') {
-                        (this.invertedIndex as any).addToken(tokenKey, docIdString, pos);
-                    }
-                });
-            }
-        });
-
-        // Invalidate query processor caches so new tokens are visible in searches
         if (this.processor && typeof (this.processor as any).invalidateCache === 'function') {
             (this.processor as any).invalidateCache();
         }
@@ -286,9 +222,9 @@ export class QueryEngine {
 
         // Build hits array with deterministic tie-breaking (newer docs first)
         const scored = Array.from(docIds).map((id: string) => {
-            const doc = this.documents.get(id) || { id };
+            const doc = this.repository.get(id) || { id };
             const score = this._computeScore(doc, query);
-            const seq = this._seqMap.get(id) || 0;
+            const seq = this.repository.getSequence(id) || 0;
             return { ...doc, _score: score, __seq: seq };
         }).sort((a, b) => {
             if (b._score !== a._score) return b._score - a._score;
@@ -1356,9 +1292,7 @@ export class QueryEngine {
 
     /** Clear all stored documents and index – used by tests */
     clean(): void {
-        this.documents.clear();
-        this._seqMap.clear();
-        this._seqCounter = 0;
+        this.repository.clear();
         if (typeof (this.invertedIndex as any).clear === 'function') {
             (this.invertedIndex as any).clear();
         }

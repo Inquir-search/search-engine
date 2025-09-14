@@ -200,6 +200,13 @@ export default class SearchEngine {
     }
 
     /**
+     * Ensure an index exists, creating it if necessary
+     */
+    ensureIndex(indexName: string, options: any = {}): void {
+        this._createIndexSync(indexName, options);
+    }
+
+    /**
      * Get the index data object
      */
     _getIndex(indexName: string) {

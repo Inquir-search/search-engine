@@ -6,6 +6,7 @@ import { Worker } from 'worker_threads';
 import { getConfigManager } from './ConfigManager';
 import { SharedQueryProcessor } from '../domain/query/SharedQueryProcessor';
 import TaskQueue from './TaskQueue';
+import PersistenceCoordinator from './PersistenceCoordinator';
 import {
     SharedMemoryWorkerPoolConfiguration,
     WorkerThread,
@@ -65,12 +66,8 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     private readonly enablePersistence: boolean;
     private persistenceTimer: NodeJS.Timeout | null = null;
 
-    // Throttling for snapshot generation
-    private readonly snapshotThrottle: Map<string, {
-        timer: NodeJS.Timeout | null;
-        pendingDocuments: number;
-        lastSnapshot: number;
-    }> = new Map();
+    // Persistence coordination
+    private readonly persistence: PersistenceCoordinator;
 
     // Performance statistics
     private readonly stats: PoolStatistics;
@@ -109,6 +106,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
         this.sharedMemoryStore = new SharedMemoryStore({
             indexName: 'default'
         });
+        this.persistence = new PersistenceCoordinator(this.saveSnapshot.bind(this));
 
         // Initialize statistics
         this.stats = {
@@ -1270,7 +1268,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
 
             // Throttled persistence to prevent snapshot spam
             if (this.enablePersistence && totalAdded > 0) {
-                this.scheduleThrottledSnapshot(indexName, totalAdded);
+                this.persistence.schedule(indexName, totalAdded);
             }
 
             return {
@@ -1941,13 +1939,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
             this.persistenceTimer = null;
         }
 
-        // Clear all throttled snapshot timers
-        for (const [indexName, throttle] of this.snapshotThrottle.entries()) {
-            if (throttle.timer) {
-                clearTimeout(throttle.timer);
-            }
-        }
-        this.snapshotThrottle.clear();
+        this.persistence.clear();
     }
 
     /**
@@ -1986,56 +1978,4 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
         return results.map(r => r.status === 'fulfilled' ? r.value : { success: false, error: 'Worker failed' });
     }
 
-    /**
-     * Schedule throttled snapshot to prevent spam when many tasks are queued
-     */
-    private scheduleThrottledSnapshot(indexName: string, documentsAdded: number): void {
-        if (!this.snapshotThrottle.has(indexName)) {
-            this.snapshotThrottle.set(indexName, {
-                timer: null,
-                pendingDocuments: 0,
-                lastSnapshot: 0
-            });
-        }
-
-        const throttle = this.snapshotThrottle.get(indexName)!;
-        throttle.pendingDocuments += documentsAdded;
-
-        const now = Date.now();
-        const timeSinceLastSnapshot = now - throttle.lastSnapshot;
-        const minInterval = 10000; // Minimum 10 seconds between snapshots
-        const maxPendingDocs = 100; // Force snapshot after 100 pending documents
-
-        // Clear existing timer
-        if (throttle.timer) {
-            clearTimeout(throttle.timer);
-        }
-
-        // Determine delay based on current conditions
-        let delay: number;
-        if (throttle.pendingDocuments >= maxPendingDocs) {
-            // Force immediate snapshot for large batches
-            delay = 0;
-        } else if (timeSinceLastSnapshot < minInterval) {
-            // Wait for minimum interval
-            delay = minInterval - timeSinceLastSnapshot;
-        } else {
-            // Standard delay for moderate batches
-            delay = 5000; // 5 seconds
-        }
-
-        // Schedule throttled snapshot
-
-        throttle.timer = setTimeout(async () => {
-            try {
-                // Save snapshot
-                await this.saveSnapshot(indexName);
-                throttle.lastSnapshot = Date.now();
-                throttle.pendingDocuments = 0;
-                throttle.timer = null;
-            } catch (error) {
-                throttle.timer = null;
-            }
-        }, delay);
-    }
 }

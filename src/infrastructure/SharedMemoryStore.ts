@@ -7,7 +7,13 @@ import SearchEngine from '../domain/SearchEngine';
 import { MappingsManager } from '../domain/MappingsManager';
 import { Tokenizer } from '../domain/Tokenizer';
 import { StopwordsManager } from './StopwordsManager';
-import { getConfigManager } from './ConfigManager';
+
+export interface ISearchEngine {
+    listIndices(): string[];
+    ensureIndex(indexName: string, options?: any): void;
+    add(doc: any, indexName?: string): void;
+    search(query: any, context?: any, indexName?: string): any;
+}
 
 // Type definitions for shared memory store
 export interface SharedMemoryStoreOptions {
@@ -21,6 +27,8 @@ export interface SharedMemoryStoreOptions {
     tokenCacheSize?: number;
     defaultAnalyzer?: string;
     fieldAnalyzers?: Record<string, string>;
+    searchEngine?: ISearchEngine;
+    engineFactory?: () => ISearchEngine;
 }
 
 export interface MemoryLayout {
@@ -80,26 +88,31 @@ export interface DocumentAddResult {
 }
 
 export default class SharedMemoryStore {
-    private readonly searchEngine: SearchEngine;
+    private readonly searchEngine: ISearchEngine;
     private readonly documents: Map<string, any> = new Map();
     private readonly indexName: string;
 
     constructor(options: SharedMemoryStoreOptions = {}) {
         this.indexName = options.indexName || 'default';
 
-        // Initialize the domain SearchEngine with proper dependencies
-        const mappingsManager = new MappingsManager();
-        const stopwordsManager = new StopwordsManager();
-        const tokenizer = new Tokenizer(stopwordsManager, {
-            stemming: true,
-            stemmingOptions: { language: 'en', aggressive: false }
-        });
+        if (options.searchEngine) {
+            this.searchEngine = options.searchEngine;
+        } else if (options.engineFactory) {
+            this.searchEngine = options.engineFactory();
+        } else {
+            const mappingsManager = new MappingsManager();
+            const stopwordsManager = new StopwordsManager();
+            const tokenizer = new Tokenizer(stopwordsManager, {
+                stemming: true,
+                stemmingOptions: { language: 'en', aggressive: false }
+            });
 
-        this.searchEngine = new SearchEngine({
-            mappingsManager,
-            tokenizer,
-            indexName: this.indexName
-        });
+            this.searchEngine = new SearchEngine({
+                mappingsManager,
+                tokenizer,
+                indexName: this.indexName
+            });
+        }
     }
 
     /**
@@ -108,25 +121,16 @@ export default class SharedMemoryStore {
     addDocument(doc: any): DocumentAddResult {
         try {
             const indexName = doc.indexName || this.indexName;
-            const compositeKey = `${indexName}:${doc.id}`;
+            const key = `${indexName}:${doc.id}`;
 
-            if (this.documents.has(compositeKey)) {
+            if (this.documents.has(key)) {
                 return { docId: this.documents.size, wasAdded: false };
             }
 
-            // Ensure the search engine has an index for this document
-            const existingIndices = this.searchEngine.listIndices();
-            if (!existingIndices.includes(indexName)) {
-                (this.searchEngine as any)._createIndexSync(indexName, {});
-            }
+            this.searchEngine.ensureIndex(indexName, {});
+            this.searchEngine.add({ ...doc, indexName }, indexName);
 
-            const docForSearchEngine = {
-                ...doc,
-                id: compositeKey
-            };
-            this.searchEngine.add(docForSearchEngine, indexName);
-
-            this.documents.set(compositeKey, { ...doc, indexName });
+            this.documents.set(key, { ...doc, indexName });
 
             return { docId: this.documents.size, wasAdded: true };
         } catch (error) {
@@ -139,110 +143,42 @@ export default class SharedMemoryStore {
      */
     search(query: any, options: SearchOptions = {}): SearchResult {
         try {
-            // Filter results by indexName if specified
             const indexName = options.indexName;
+            const ctx = { from: options.from || 0, size: options.size || 10, aggregations: options.aggregations || options.aggs };
+
             if (indexName) {
-                // For index-specific searches, we need to get ALL results first, then filter
-                // Use a large size to get all results, then apply filtering and pagination
-                const result = this.searchEngine.search(
-                    query,
-                    {
-                        from: 0,
-                        size: 10000, // Large size to get all results
-                        aggregations: options.aggregations || options.aggs
-                    },
-                    indexName
-                );
-
-                const allHits = result.hits || [];
-                const filteredHits = allHits.filter((doc: any) => {
-                    return doc.indexName === indexName;
-                }).map((doc: any) => {
-                    // Restore original document ID by removing the indexName prefix
-                    const originalId = doc.id.replace(`${indexName}:`, '');
-                    return {
-                        ...doc,
-                        id: originalId
-                    };
-                });
-
-                // Apply pagination to filtered results
-                const from = options.from || 0;
-                const size = options.size || 10;
-                const paginatedHits = filteredHits.slice(from, from + size);
-
-                // Calculate aggregations and facets based on filtered results only
-                let filteredAggregations = {};
-                let filteredFacets = {};
-
-                if (options.aggregations || options.aggs) {
-                    filteredAggregations = this.calculateAggregationsForIndex(
-                        options.aggregations || options.aggs,
-                        filteredHits,
-                        indexName
-                    );
-                }
-
-                // Calculate facets based on filtered results
-                if (result.facets) {
-                    filteredFacets = this.calculateFacetsForIndex(result.facets, filteredHits, indexName);
-                }
-
-                return {
-                    hits: paginatedHits,
-                    total: filteredHits.length, // Total count of filtered results
-                    from: from,
-                    size: size,
-                    aggregations: filteredAggregations,
-                    facets: filteredFacets
-                };
+                return this.searchEngine.search(query, ctx, indexName);
             }
 
-            // For non-index-specific searches, search across all indices
             const indices = this.searchEngine.listIndices();
             let allHits: any[] = [];
+            let aggregations: Record<string, any> = {};
+            let facets: Record<string, any> = {};
 
             for (const idx of indices) {
-                const res = this.searchEngine.search(
-                    query,
-                    {
-                        from: 0,
-                        size: 10000,
-                        aggregations: options.aggregations || options.aggs
-                    },
-                    idx
-                );
-
-                if (res.hits) {
-                    allHits = allHits.concat(
-                        res.hits.map((doc: any) => ({
-                            ...doc,
-                            id: doc.id.replace(`${doc.indexName}:`, '')
-                        }))
-                    );
+                const res = this.searchEngine.search(query, { from: 0, size: ctx.from + ctx.size, aggregations: ctx.aggregations }, idx);
+                allHits = allHits.concat(res.hits || []);
+                if (res.aggregations) {
+                    aggregations = this.mergeAggregations(aggregations, res.aggregations);
+                }
+                if (res.facets) {
+                    facets = this.mergeFacets(facets, res.facets);
                 }
             }
 
-            const from = options.from || 0;
-            const size = options.size || 10;
-            const paginatedHits = allHits.slice(from, from + size);
+            const paginatedHits = allHits.slice(ctx.from, ctx.from + ctx.size);
 
             return {
                 hits: paginatedHits,
                 total: allHits.length,
-                from,
-                size,
-                aggregations: {},
-                facets: {}
+                from: ctx.from,
+                size: ctx.size,
+                allMatches: allHits,
+                aggregations: Object.keys(aggregations).length ? aggregations : undefined,
+                facets: Object.keys(facets).length ? facets : undefined
             };
         } catch (error) {
-            console.error('Search error in SharedMemoryStore:', error);
-            return {
-                hits: [],
-                total: 0,
-                from: 0,
-                size: 0
-            };
+            throw new Error(`Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
 
@@ -442,5 +378,34 @@ export default class SharedMemoryStore {
         }
 
         return facets;
+    }
+
+    private mergeAggregations(target: any, source: any): any {
+        const result = { ...target };
+        for (const [agg, data] of Object.entries(source)) {
+            if (!result[agg]) {
+                result[agg] = data;
+            } else if (data && data.buckets) {
+                const existing = result[agg].buckets || [];
+                const merged = [...existing];
+                for (const bucket of data.buckets as any[]) {
+                    const found = merged.find((b: any) => b.key === bucket.key);
+                    if (found) found.doc_count += bucket.doc_count; else merged.push({ ...bucket });
+                }
+                result[agg] = { buckets: merged };
+            }
+        }
+        return result;
+    }
+
+    private mergeFacets(target: any, source: any): any {
+        const result = { ...target };
+        for (const [field, counts] of Object.entries(source)) {
+            if (!result[field]) result[field] = {};
+            for (const [val, count] of Object.entries(counts as any)) {
+                result[field][val] = (result[field][val] || 0) + (count as number);
+            }
+        }
+        return result;
     }
 }
