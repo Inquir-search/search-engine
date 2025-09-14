@@ -1013,8 +1013,11 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     }
 
     // CRDT Helper Methods
-    private generateOperationId(): string {
-        return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    private operationSeq = 0;
+
+    private generateOperationId(type: string, indexName: string, documentId: string): string {
+        this.operationSeq += 1;
+        return `${type}-${indexName}-${documentId}-${this.operationSeq}`;
     }
 
     private getVectorClock(workerId: string): Map<string, number> {
@@ -1058,7 +1061,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
     }
 
     private logOperation(type: 'add' | 'update' | 'delete', indexName: string, documentId: string, data?: any): string {
-        const operationId = this.generateOperationId();
+        const operationId = this.generateOperationId(type, indexName, documentId);
         const vectorClock = this.incrementVectorClock('main');
 
         const operation = {
@@ -1166,7 +1169,7 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
 
         try {
             // CRDT: Generate operation ID for idempotency
-            const operationId = this.generateOperationId();
+            const operationId = this.generateOperationId('add', indexName, `batch-${documents.length}`);
 
             // CRDT: Check for duplicate operations
             if (this.isDuplicateOperation(operationId)) {
