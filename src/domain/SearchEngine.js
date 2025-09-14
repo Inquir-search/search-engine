@@ -138,9 +138,10 @@ export default class SearchEngine {
         if (!this.persistence) return;
 
         const state = {
-            documents: Array.from(this.documents.entries()),
+            // Ensure deterministic ordering for snapshot contents
+            documents: Array.from(this.documents.entries()).sort((a, b) => a[0].localeCompare(b[0])),
             invertedIndex: this.invertedIndex.serialize(),
-            docLengths: Array.from(this.docLengths.entries()),
+            docLengths: Array.from(this.docLengths.entries()).sort((a, b) => a[0].localeCompare(b[0])),
             totalDocs: this.totalDocs,
             avgDocLength: this.avgDocLength,
             indexName: this.name,
