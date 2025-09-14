@@ -120,6 +120,8 @@ export default class SearchEngine {
             this.docLengths,
             this.invertedIndex
         );
+        // Ensure query engine uses the current scorer after loading
+        this.queryEngine.scorer = this.scorer;
     }
 
     _startFlushTimer() {
