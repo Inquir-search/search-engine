@@ -144,11 +144,15 @@ export default class SharedMemoryStore {
             if (indexName) {
                 // For index-specific searches, we need to get ALL results first, then filter
                 // Use a large size to get all results, then apply filtering and pagination
-                const result = this.searchEngine.search(query, {
-                    from: 0,
-                    size: 10000, // Large size to get all results
-                    aggregations: options.aggregations || options.aggs
-                });
+                const result = this.searchEngine.search(
+                    query,
+                    {
+                        from: 0,
+                        size: 10000, // Large size to get all results
+                        aggregations: options.aggregations || options.aggs
+                    },
+                    indexName
+                );
 
                 const allHits = result.hits || [];
                 const filteredHits = allHits.filter((doc: any) => {
@@ -194,20 +198,42 @@ export default class SharedMemoryStore {
                 };
             }
 
-            // For non-index-specific searches, use normal pagination
-            const result = this.searchEngine.search(query, {
-                from: options.from || 0,
-                size: options.size || 10,
-                aggregations: options.aggregations || options.aggs
-            });
+            // For non-index-specific searches, search across all indices
+            const indices = this.searchEngine.listIndices();
+            let allHits: any[] = [];
+
+            for (const idx of indices) {
+                const res = this.searchEngine.search(
+                    query,
+                    {
+                        from: 0,
+                        size: 10000,
+                        aggregations: options.aggregations || options.aggs
+                    },
+                    idx
+                );
+
+                if (res.hits) {
+                    allHits = allHits.concat(
+                        res.hits.map((doc: any) => ({
+                            ...doc,
+                            id: doc.id.replace(`${doc.indexName}:`, '')
+                        }))
+                    );
+                }
+            }
+
+            const from = options.from || 0;
+            const size = options.size || 10;
+            const paginatedHits = allHits.slice(from, from + size);
 
             return {
-                hits: result.hits || [],
-                total: result.total || 0,
-                from: result.from || 0,
-                size: result.size || 10,
-                aggregations: result.aggregations || {},
-                facets: result.facets || {}
+                hits: paginatedHits,
+                total: allHits.length,
+                from,
+                size,
+                aggregations: {},
+                facets: {}
             };
         } catch (error) {
             console.error('Search error in SharedMemoryStore:', error);
