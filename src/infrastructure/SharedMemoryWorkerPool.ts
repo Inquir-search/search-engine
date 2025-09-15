@@ -1373,17 +1373,70 @@ export default class SharedMemoryWorkerPool extends EventEmitter {
 
         // Initialize persistence layer for this index
         if (this.enablePersistence) {
-            const persistence = this.getPersistenceLayer(config.indexName);
-            if (persistence) {
+            try {
+                const indexShardingConfig = {
+                    enableShardedStorage: config.enableShardedStorage ?? false,
+                    numShards: config.numShards ?? 1,
+                    facetFields: config.facetFields || [],
+                    shardingStrategy: 'hash' as const
+                };
+
+                const persistence = new StreamingPersistence({
+                    ...this.config.persistenceConfig,
+                    baseDir: `${this.config.persistenceConfig!.baseDir}/${config.indexName}`,
+                    indexName: config.indexName,
+                    indexShardingConfig
+                });
+                this.persistenceLayer.set(config.indexName, persistence);
+            } catch (error: any) {
+                return {
+                    success: false,
+                    error: `Failed to initialize persistence: ${error.message || error}`
+                };
             }
         }
 
-        return {
-            success: true,
-            indexName: config.indexName,
-            sharedMemory: true,
-            persistence: this.enablePersistence
-        };
+        // Broadcast initialization task to all workers
+        try {
+            const operation: WorkerOperation = {
+                type: 'INIT_ENGINE',
+                indexName: config.indexName,
+                data: {
+                    config: {
+                        indexName: config.indexName,
+                        enableShardedStorage: config.enableShardedStorage || false,
+                        numShards: config.numShards || 1,
+                        facetFields: config.facetFields || []
+                    }
+                }
+            } as any;
+
+            const results = await Promise.all(
+                this.workers.map(() => this.submitTask(operation))
+            );
+
+            const initializedWorkers = results.filter(r => r && r.success).length;
+            if (initializedWorkers !== this.workers.length) {
+                return {
+                    success: false,
+                    error: 'Failed to initialize engine on all workers',
+                    initializedWorkers
+                };
+            }
+
+            return {
+                success: true,
+                indexName: config.indexName,
+                sharedMemory: true,
+                persistence: this.enablePersistence,
+                initializedWorkers
+            };
+        } catch (error: any) {
+            return {
+                success: false,
+                error: `Worker initialization failed: ${error.message || error}`
+            };
+        }
     }
 
     async initializeFromRestored(indexName: string, restoredData: any, facetFields: string[] = []): Promise<any> {
